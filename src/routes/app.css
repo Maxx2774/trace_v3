@@ -1,0 +1,133 @@
+@font-face {
+	font-family: 'General Sans';
+	src: url('/fonts/general-sans-regular.woff2') format('woff2');
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'General Sans';
+	src: url('/fonts/general-sans-medium.woff2') format('woff2');
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'Instrument Sans';
+	src: url('/fonts/instrument-sans-variable-latin.woff2') format('woff2');
+	font-style: normal;
+	font-weight: 400 500;
+	font-stretch: 100%;
+	font-display: swap;
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+		U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+	font-family: 'General Sans', ui-sans-serif, system-ui, sans-serif;
+	color-scheme: light;
+	--background: #ffffff;
+	--border: #eef0f2;
+	--surface-hover: #f5f6f7;
+	--surface-active: #e9edf1;
+	--surface-border: #f3f4f5;
+	--text: #172033;
+	--muted: #7b8493;
+	--accent: oklch(53% 0.072 167);
+	--popover-background: #ffffff;
+	--composer-background: #f5f6f7;
+	--chat-panel-background: #f5f6f7;
+	--chat-composer-background: #eef0f2;
+	--chat-panel-border: #eef0f2;
+	--button-background: #172033;
+	--button-foreground: #ffffff;
+	--button-hover-background: #3b4a66;
+	--button-active-background: #0b111c;
+	--destructive-text: #a43c3c;
+	--destructive-hover-background: #f9eded;
+	--overlay-backdrop: rgb(23 32 51 / 14%);
+	--sidebar-width: 17.5rem;
+	--chat-panel-width: 500px;
+	--sidebar-easing: cubic-bezier(0.22, 1, 0.36, 1);
+	--surface-elevated: var(--popover-background);
+	--sheet-shadow: 0 1.5rem 5rem rgb(23 32 51 / 18%);
+}
+
+:root[data-theme='dark'] {
+	color-scheme: dark;
+	--background: #000000;
+	--border: #29303a;
+	--surface-hover: #222222;
+	--surface-active: #2a2a2a;
+	--surface-border: #252525;
+	--text: #f4f1eb;
+	--muted: #a6adb8;
+	--accent: oklch(73% 0.083 167);
+	--popover-background: #1a1a1a;
+	--composer-background: #222222;
+	--chat-panel-background: #171717;
+	--chat-composer-background: #222222;
+	--chat-panel-border: #222222;
+	--button-background: #f4f1eb;
+	--button-foreground: #0d0f12;
+	--button-hover-background: #c4cad3;
+	--button-active-background: #aeb7c2;
+	--destructive-text: #ed7777;
+	--destructive-hover-background: #4a2d31;
+	--overlay-backdrop: rgb(0 0 0 / 34%);
+	--sheet-shadow: 0 1.5rem 5rem rgb(0 0 0 / 45%);
+}
+
+html,
+body {
+	min-width: 20rem;
+	min-height: 100%;
+	margin: 0;
+	background: var(--background);
+	color: var(--text);
+	font-family: inherit;
+}
+
+body {
+	min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+	font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+}
+
+button,
+input,
+textarea {
+	font: inherit;
+}
+
+button,
+a {
+	-webkit-tap-highlight-color: transparent;
+}
+
+:root.theme-changing *,
+:root.theme-changing *::before,
+:root.theme-changing *::after {
+	transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		scroll-behavior: auto !important;
+		transition-duration: 0.01ms !important;
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+	}
+}
