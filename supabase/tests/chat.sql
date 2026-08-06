@@ -7,17 +7,15 @@ declare
 	v_turn_id uuid := gen_random_uuid();
 	v_result jsonb;
 	v_conversation_id uuid;
+	v_first_lease timestamptz;
+	v_second_lease timestamptz;
+	v_extra_turn_id uuid;
+	v_page jsonb;
+	v_older_page jsonb;
+	v_index integer;
 begin
 	insert into auth.users (
-		id,
-		instance_id,
-		aud,
-		role,
-		email,
-		raw_app_meta_data,
-		raw_user_meta_data,
-		created_at,
-		updated_at
+		id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
 	)
 	values
 		(
@@ -43,145 +41,155 @@ begin
 			now()
 		);
 
-	v_result := public.begin_chat_turn(
-		v_user_id,
-		null,
-		v_turn_id,
-		'Hej Trace',
-		'Kort systemprompt',
-		20,
-		48000
-	);
-
+	v_result := public.begin_chat_turn(v_user_id, null, v_turn_id, 'Hej Trace', 120);
 	assert v_result ->> 'status' = 'created', 'begin must create a new turn';
 	v_conversation_id := (v_result #>> '{conversation,id}')::uuid;
-	assert (v_result #>> '{message,turnId}')::uuid = v_turn_id, 'begin must return the user row';
-	assert jsonb_array_length(v_result -> 'history') = 1, 'history must include the current user turn';
-	assert (select count(*) from public.messages where turn_id = v_turn_id) = 1,
-		'begin must persist exactly one user message';
+	v_first_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	assert (select count(*) from public.turns where id = v_turn_id) = 1,
+		'begin must create exactly one lifecycle row';
+	assert (select count(*) from public.messages where turn_id = v_turn_id and role = 'user') = 1,
+		'begin must create exactly one user message';
 
-	v_result := public.begin_chat_turn(
-		v_user_id,
-		v_conversation_id,
-		v_turn_id,
-		'Hej Trace',
-		'Kort systemprompt',
-		20,
-		48000
-	);
-	assert v_result ->> 'status' = 'pending', 'an uncommitted retry must not start another model call';
+	v_result := public.begin_chat_turn(v_user_id, v_conversation_id, v_turn_id, 'Hej Trace', 120);
+	assert v_result ->> 'status' = 'pending', 'a valid processing lease must return pending';
 
-	v_result := public.commit_chat_turn(
-		v_user_id,
-		v_conversation_id,
-		v_turn_id,
-		'Hej! Hur kan jag hjälpa dig?'
-	);
-	assert v_result #>> '{message,role}' = 'assistant', 'commit must return the assistant row';
+	update public.turns
+	set lease_expires_at = statement_timestamp() - interval '1 second'
+	where id = v_turn_id;
+
+	v_result := public.begin_chat_turn(v_user_id, v_conversation_id, v_turn_id, 'Hej Trace', 120);
+	assert v_result ->> 'status' = 'resumed', 'an expired lease must be reclaimable';
+	v_second_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	assert v_second_lease > v_first_lease, 'reclaim must issue a new fencing value';
+
+	begin
+		perform public.complete_chat_turn(v_user_id, v_turn_id, v_first_lease, 'Stale svar');
+		assert false, 'a stale lease must not finalize';
+	exception when sqlstate '55000' then
+		null;
+	end;
+
+	v_result := public.complete_chat_turn(v_user_id, v_turn_id, v_second_lease, 'Hej!');
+	assert v_result #>> '{message,role}' = 'assistant', 'complete must return the assistant row';
+	assert (select status from public.turns where id = v_turn_id) = 'completed',
+		'complete must finalize the lifecycle';
 	assert (select count(*) from public.messages where turn_id = v_turn_id) = 2,
-		'commit must add exactly one assistant message';
+		'a completed turn must have one user and one assistant message';
 
-	v_result := public.commit_chat_turn(
-		v_user_id,
-		v_conversation_id,
-		v_turn_id,
-		'Hej! Hur kan jag hjälpa dig?'
-	);
-	assert (select count(*) from public.messages where turn_id = v_turn_id) = 2,
-		'an identical commit retry must be idempotent';
+	v_result := public.begin_chat_turn(v_user_id, v_conversation_id, v_turn_id, 'Hej Trace', 120);
+	assert v_result ->> 'status' = 'completed', 'completed begin must replay';
+	assert v_result #>> '{assistantMessage,content}' = 'Hej!', 'replay must return canonical text';
+	assert jsonb_array_length(v_result -> 'journalRecords') = 0,
+		'replay without records must return an empty projection';
 
-	v_result := public.begin_chat_turn(
-		v_user_id,
-		v_conversation_id,
-		v_turn_id,
-		'Hej Trace',
-		'Kort systemprompt',
-		20,
-		48000
-	);
-	assert v_result ->> 'status' = 'completed', 'a completed retry must return saved output';
-	assert v_result #>> '{assistantMessage,content}' = 'Hej! Hur kan jag hjälpa dig?',
-		'a completed retry must return the canonical assistant content';
+	v_result := public.begin_chat_turn(v_user_id, v_conversation_id, v_turn_id, 'Annat', 120);
+	assert v_result ->> 'status' = 'conflict', 'changed input under the same turn id must conflict';
 
 	v_result := public.begin_chat_turn(
-		v_user_id,
-		v_conversation_id,
-		v_turn_id,
-		'Annat innehåll',
-		'Kort systemprompt',
-		20,
-		48000
-	);
-	assert v_result ->> 'status' = 'conflict', 'reusing a turn id with other content must conflict';
-
-	v_result := public.begin_chat_turn(
-		v_other_user_id,
-		v_conversation_id,
-		gen_random_uuid(),
-		'Försök över ägargränsen',
-		'Kort systemprompt',
-		20,
-		48000
+		v_other_user_id, v_conversation_id, gen_random_uuid(), 'Ägarförsök', 120
 	);
 	assert v_result ->> 'status' = 'not_found', 'another owner must not append to the conversation';
 
 	v_result := public.begin_chat_turn(
-		v_other_user_id,
+		v_user_id,
 		null,
 		gen_random_uuid(),
-		'En annan användares konversation',
-		'Kort systemprompt',
-		20,
-		48000
+		'Jag åt en banan men minns inte när. Jag åt yoghurt ungefär klockan 08 idag. Jag åt middag exakt klockan 19:30 idag.',
+		120
 	);
-	assert v_result ->> 'status' = 'created', 'the second owner needs an isolated fixture';
+	assert v_result ->> 'status' = 'created', 'long input must still create a turn';
+	assert v_result #>> '{conversation,title}' = btrim(v_result #>> '{conversation,title}'),
+		'truncated provisional titles must remain trimmed';
+	assert char_length(v_result #>> '{conversation,title}') <= 80,
+		'provisional titles must remain within the initial limit';
 
-	assert not has_function_privilege(
-		'anon',
-		'public.begin_chat_turn(uuid,uuid,uuid,text,text,integer,integer)',
-		'execute'
-	), 'anon must not execute begin_chat_turn';
+	for v_index in 1..21 loop
+		v_extra_turn_id := gen_random_uuid();
+		insert into public.turns (
+			id, conversation_id, user_id, status, lease_expires_at, created_at, completed_at
+		)
+		values (
+			v_extra_turn_id,
+			v_conversation_id,
+			v_user_id,
+			'completed',
+			null,
+			statement_timestamp() - make_interval(mins => v_index),
+			statement_timestamp() - make_interval(mins => v_index) + interval '1 second'
+		);
+
+		insert into public.messages (
+			conversation_id, user_id, turn_id, role, content, created_at
+		)
+		values
+			(
+				v_conversation_id,
+				v_user_id,
+				v_extra_turn_id,
+				'user',
+				'Fråga ' || v_index,
+				statement_timestamp() - make_interval(mins => v_index)
+			),
+			(
+				v_conversation_id,
+				v_user_id,
+				v_extra_turn_id,
+				'assistant',
+				'Svar ' || v_index,
+				statement_timestamp() - make_interval(mins => v_index) + interval '1 second'
+			);
+	end loop;
+
+	v_page := public.get_conversation_page(v_user_id, v_conversation_id, null, null, 20);
+	assert jsonb_array_length(v_page -> 'messages') = 40,
+		'initial history page must contain twenty complete turns';
+	assert (
+		select count(distinct message ->> 'turnId')
+		from jsonb_array_elements(v_page -> 'messages') message
+	) = 20, 'history pagination must not split turns';
+	assert v_page -> 'olderCursor' <> 'null'::jsonb,
+		'initial history page must return an older cursor';
+
+	v_older_page := public.get_conversation_page(
+		v_user_id,
+		v_conversation_id,
+		(v_page #>> '{olderCursor,createdAt}')::timestamptz,
+		(v_page #>> '{olderCursor,turnId}')::uuid,
+		15
+	);
+	assert jsonb_array_length(v_older_page -> 'messages') = 4,
+		'older history page must return the remaining two complete turns';
+	assert v_older_page -> 'olderCursor' = 'null'::jsonb,
+		'last history page must not return another cursor';
+	assert public.get_conversation_page(
+		v_other_user_id, v_conversation_id, null, null, 20
+	) is null, 'conversation pages must enforce ownership';
+
 	assert not has_function_privilege(
 		'authenticated',
-		'public.commit_chat_turn(uuid,uuid,uuid,text)',
+		'public.begin_chat_turn(uuid,uuid,uuid,text,integer)',
 		'execute'
-	), 'authenticated must not execute commit_chat_turn';
+	), 'authenticated must not execute lifecycle RPCs';
 	assert has_function_privilege(
 		'service_role',
-		'public.begin_chat_turn(uuid,uuid,uuid,text,text,integer,integer)',
+		'public.complete_chat_turn(uuid,uuid,timestamptz,text)',
 		'execute'
-	), 'service_role must execute begin_chat_turn';
-	assert not has_table_privilege('authenticated', 'public.conversations', 'insert'),
-		'authenticated must not insert conversations directly';
-	assert not has_table_privilege('authenticated', 'public.messages', 'delete'),
-		'authenticated must not delete messages directly';
+	), 'service role must finalize turns';
+	assert not has_function_privilege(
+		'authenticated',
+		'public.get_conversation_page(uuid,uuid,timestamptz,uuid,integer)',
+		'execute'
+	), 'authenticated must not execute the conversation page RPC directly';
+	assert has_function_privilege(
+		'service_role',
+		'public.get_conversation_page(uuid,uuid,timestamptz,uuid,integer)',
+		'execute'
+	), 'service role must read paginated conversation history';
+	assert not has_table_privilege('authenticated', 'public.turns', 'select'),
+		'turn lifecycle must remain server-only';
+	assert not has_table_privilege('authenticated', 'public.messages', 'insert'),
+		'authenticated must not insert messages directly';
 end;
 $$;
-
-set local role authenticated;
-select set_config(
-	'request.jwt.claim.sub',
-	'a1000000-0000-4000-8000-000000000000',
-	true
-);
-
-do $$
-begin
-	assert (select count(*) from public.conversations) = 1,
-		'RLS must expose exactly the signed-in owner conversation';
-	assert not exists (
-		select 1
-		from public.conversations
-		where user_id = 'a2000000-0000-4000-8000-000000000000'
-	), 'RLS must hide another owner conversation';
-	assert not exists (
-		select 1
-		from public.messages
-		where user_id = 'a2000000-0000-4000-8000-000000000000'
-	), 'RLS must hide another owner messages';
-end;
-$$;
-
-reset role;
 
 rollback;

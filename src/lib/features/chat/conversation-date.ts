@@ -1,29 +1,101 @@
 const millisecondsPerDay = 86_400_000;
-const timeFormatter = new Intl.DateTimeFormat('sv-SE', {
-	hour: '2-digit',
-	minute: '2-digit',
-	hourCycle: 'h23'
-});
+const weekdayLabels = ['sön', 'mån', 'tis', 'ons', 'tors', 'fre', 'lör'] as const;
+const shortMonthLabels = [
+	'jan',
+	'feb',
+	'mar',
+	'apr',
+	'maj',
+	'jun',
+	'jul',
+	'aug',
+	'sep',
+	'okt',
+	'nov',
+	'dec'
+] as const;
+const monthLabels = [
+	'Januari',
+	'Februari',
+	'Mars',
+	'April',
+	'Maj',
+	'Juni',
+	'Juli',
+	'Augusti',
+	'September',
+	'Oktober',
+	'November',
+	'December'
+] as const;
 
-export function formatConversationDate(value: string, now = new Date()): string {
+export type ConversationDatePresentation = {
+	groupKey: string;
+	groupLabel: string;
+	dateLabel: string;
+};
+
+export function getConversationDatePresentation(
+	value: string,
+	now = new Date()
+): ConversationDatePresentation {
 	const date = new Date(value);
-	const dateAtMidnight = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
-	const todayAtMidnight = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
-	const daysAgo = Math.max(0, Math.round((todayAtMidnight - dateAtMidnight) / millisecondsPerDay));
-	let dateLabel: string;
+	const dateDay = getCalendarDay(date);
+	const today = getCalendarDay(now);
+	const startOfThisWeek = today - ((now.getDay() + 6) % 7);
 
-	if (daysAgo === 0) dateLabel = 'Idag';
-	else if (daysAgo === 1) dateLabel = 'Igår';
-	else if (daysAgo < 7) dateLabel = `${daysAgo} dagar sedan`;
-	else if (daysAgo < 14) dateLabel = 'Förra veckan';
-	else if (daysAgo < 28) dateLabel = `${Math.floor(daysAgo / 7)} veckor sedan`;
-	else {
-		dateLabel = new Intl.DateTimeFormat('sv-SE', {
-			day: 'numeric',
-			month: 'short',
-			year: date.getFullYear() === now.getFullYear() ? undefined : 'numeric'
-		}).format(date);
+	if (dateDay >= today) {
+		return { groupKey: 'today', groupLabel: 'Idag', dateLabel: formatTime(date) };
 	}
 
-	return `${dateLabel} ${timeFormatter.format(date)}`;
+	if (dateDay === today - 1) {
+		return { groupKey: 'yesterday', groupLabel: 'Igår', dateLabel: formatTime(date) };
+	}
+
+	if (dateDay >= startOfThisWeek) {
+		return {
+			groupKey: 'this-week',
+			groupLabel: 'Den här veckan',
+			dateLabel: formatWeekdayTime(date)
+		};
+	}
+
+	if (dateDay >= startOfThisWeek - 7) {
+		return {
+			groupKey: 'last-week',
+			groupLabel: 'Förra veckan',
+			dateLabel: formatWeekdayTime(date)
+		};
+	}
+
+	const year = date.getFullYear();
+	const month = date.getMonth();
+	return {
+		groupKey: `month-${year}-${String(month + 1).padStart(2, '0')}`,
+		groupLabel: `${monthLabels[month]}${year === now.getFullYear() ? '' : ` ${year}`}`,
+		dateLabel: `${date.getDate()} ${shortMonthLabels[month]}`
+	};
+}
+
+export function getRecentConversationDateLabel(value: string, now = new Date()): string {
+	const date = new Date(value);
+	const dateDay = getCalendarDay(date);
+	const today = getCalendarDay(now);
+
+	if (dateDay >= today) return formatTime(date);
+	if (dateDay === today - 1) return 'Igår';
+
+	return `${date.getDate()} ${shortMonthLabels[date.getMonth()]}`;
+}
+
+function getCalendarDay(date: Date): number {
+	return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / millisecondsPerDay;
+}
+
+function formatWeekdayTime(date: Date): string {
+	return `${weekdayLabels[date.getDay()]} ${formatTime(date)}`;
+}
+
+function formatTime(date: Date): string {
+	return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }

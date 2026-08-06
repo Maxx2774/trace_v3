@@ -58,7 +58,6 @@
 		width: min(100%, 44rem);
 		flex-direction: column;
 		align-items: flex-start;
-		gap: 2.75rem;
 	}
 
 	.greeting-group {

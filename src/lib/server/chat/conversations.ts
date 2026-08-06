@@ -1,11 +1,17 @@
 import type {
 	ChatMessage,
 	ConversationCursor,
-	ConversationDetail,
+	ConversationDetailPage,
+	ConversationHistoryCursor,
 	ConversationPage,
 	ConversationSummary
 } from '$lib/features/chat/contracts';
-import { CONVERSATION_PAGE_SIZE, INITIAL_CONVERSATION_COUNT } from '$lib/features/chat/contracts';
+import {
+	CONVERSATION_HISTORY_TURN_PAGE_SIZE,
+	CONVERSATION_PAGE_SIZE,
+	INITIAL_CONVERSATION_COUNT,
+	INITIAL_CONVERSATION_TURN_COUNT
+} from '$lib/features/chat/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 type ConversationRow = {
@@ -23,10 +29,6 @@ type MessageRow = {
 	role: 'user' | 'assistant';
 	content: string;
 	created_at: string;
-};
-
-type ConversationDetailRow = ConversationRow & {
-	messages: MessageRow[] | null;
 };
 
 export class ConversationNotFoundError extends Error {}
@@ -107,30 +109,24 @@ export function createConversationPage(
 	};
 }
 
-export async function getOwnedConversation(
+export async function getOwnedConversationPage(
 	client: SupabaseClient,
 	userId: string,
-	conversationId: string
-): Promise<ConversationDetail> {
-	const { data, error } = await client
-		.from('conversations')
-		.select(
-			'id,title,created_at,updated_at,last_message_at,messages(id,conversation_id,turn_id,role,content,created_at)'
-		)
-		.eq('user_id', userId)
-		.eq('id', conversationId)
-		.order('created_at', { referencedTable: 'messages', ascending: true })
-		.order('id', { referencedTable: 'messages', ascending: true })
-		.maybeSingle();
+	conversationId: string,
+	before: ConversationHistoryCursor | null
+): Promise<ConversationDetailPage> {
+	const turnLimit = before ? CONVERSATION_HISTORY_TURN_PAGE_SIZE : INITIAL_CONVERSATION_TURN_COUNT;
+	const { data, error } = await client.rpc('get_conversation_page', {
+		p_user_id: userId,
+		p_conversation_id: conversationId,
+		p_before_created_at: before?.createdAt ?? null,
+		p_before_turn_id: before?.turnId ?? null,
+		p_turn_limit: turnLimit
+	});
 
 	if (error) throw error;
 	if (!data) throw new ConversationNotFoundError('Konversationen hittades inte.');
-
-	const row = data as unknown as ConversationDetailRow;
-	return {
-		...mapConversation(row),
-		messages: (row.messages ?? []).map(mapMessage)
-	};
+	return data as ConversationDetailPage;
 }
 
 export async function deleteOwnedConversation(

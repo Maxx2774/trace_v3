@@ -1,167 +1,62 @@
-import {
-	CONVERSATION_PAGE_SIZE,
-	INITIAL_CONVERSATION_COUNT,
-	type ConversationSummary
-} from '$lib/features/chat/contracts';
+import type { ConversationDetailPage } from '$lib/features/chat/contracts';
+import { getOwnedConversationPage } from '$lib/server/chat/conversations';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it, vi } from 'vitest';
-import {
-	createConversationPage,
-	renameOwnedConversation,
-	replaceProvisionalConversationTitle
-} from '$lib/server/chat/conversations';
 
-describe('createConversationPage', () => {
-	it('supports the larger initial conversation page', () => {
-		const conversations = Array.from({ length: INITIAL_CONVERSATION_COUNT + 1 }, (_, index) =>
-			conversation(index)
-		);
-
-		const page = createConversationPage(conversations, INITIAL_CONVERSATION_COUNT);
-		const lastConversation = conversations[INITIAL_CONVERSATION_COUNT - 1];
-
-		expect(page.conversations).toHaveLength(INITIAL_CONVERSATION_COUNT);
-		expect(page.nextCursor).toEqual({
-			id: lastConversation.id,
-			lastMessageAt: lastConversation.lastMessageAt
-		});
-	});
-
-	it('returns a cursor when another page exists', () => {
-		const conversations = Array.from({ length: CONVERSATION_PAGE_SIZE + 1 }, (_, index) =>
-			conversation(index)
-		);
-
-		const page = createConversationPage(conversations);
-		const lastConversation = conversations[CONVERSATION_PAGE_SIZE - 1];
-
-		expect(page.conversations).toHaveLength(CONVERSATION_PAGE_SIZE);
-		expect(page.nextCursor).toEqual({
-			id: lastConversation.id,
-			lastMessageAt: lastConversation.lastMessageAt
-		});
-	});
-
-	it('omits the cursor when the final page fits', () => {
-		const conversations = Array.from({ length: CONVERSATION_PAGE_SIZE }, (_, index) =>
-			conversation(index)
-		);
-
-		expect(createConversationPage(conversations)).toEqual({
-			conversations,
-			nextCursor: null
-		});
-	});
-});
-
-describe('renameOwnedConversation', () => {
-	it('updates only the requested owner conversation and returns the summary', async () => {
-		const row = {
-			id: '10000000-0000-4000-8000-000000000000',
-			title: 'Nytt namn',
-			created_at: '2026-08-06T10:00:00.000Z',
-			updated_at: '2026-08-06T11:00:00.000Z',
-			last_message_at: '2026-08-06T10:30:00.000Z'
-		};
-		const builder = createUpdateBuilder(row);
-		const client = { from: vi.fn(() => builder) } as unknown as SupabaseClient;
-
-		const result = await renameOwnedConversation(
-			client,
-			'20000000-0000-4000-8000-000000000000',
-			row.id,
-			row.title
-		);
-
-		expect(client.from).toHaveBeenCalledWith('conversations');
-		expect(builder.update).toHaveBeenCalledWith({
-			title: row.title,
-			updated_at: expect.any(String)
-		});
-		expect(builder.eq).toHaveBeenNthCalledWith(1, 'id', row.id);
-		expect(builder.eq).toHaveBeenNthCalledWith(
-			2,
-			'user_id',
-			'20000000-0000-4000-8000-000000000000'
-		);
-		expect(result).toEqual({
-			id: row.id,
-			title: row.title,
-			createdAt: row.created_at,
-			updatedAt: row.updated_at,
-			lastMessageAt: row.last_message_at
-		});
-	});
-});
-
-describe('replaceProvisionalConversationTitle', () => {
-	it('updates the title only while the provisional title is unchanged', async () => {
-		const row = {
-			id: '10000000-0000-4000-8000-000000000000',
-			title: 'Magbesvär efter lunch',
-			created_at: '2026-08-06T10:00:00.000Z',
-			updated_at: '2026-08-06T11:00:00.000Z',
-			last_message_at: '2026-08-06T10:30:00.000Z'
-		};
-		const builder = createUpdateBuilder(row);
-		const client = { from: vi.fn(() => builder) } as unknown as SupabaseClient;
-
-		const result = await replaceProvisionalConversationTitle(
-			client,
-			'20000000-0000-4000-8000-000000000000',
-			row.id,
-			'jag har ont efter lunch',
-			row.title
-		);
-
-		expect(builder.eq).toHaveBeenNthCalledWith(1, 'id', row.id);
-		expect(builder.eq).toHaveBeenNthCalledWith(
-			2,
-			'user_id',
-			'20000000-0000-4000-8000-000000000000'
-		);
-		expect(builder.eq).toHaveBeenNthCalledWith(3, 'title', 'jag har ont efter lunch');
-		expect(result?.title).toBe(row.title);
-	});
-
-	it('does not overwrite a title that has already changed', async () => {
-		const builder = createUpdateBuilder(null);
-		const client = { from: vi.fn(() => builder) } as unknown as SupabaseClient;
+describe('getOwnedConversationPage', () => {
+	it('requests twenty turns for the initial page', async () => {
+		const page = conversationPage();
+		const rpc = vi.fn().mockResolvedValue({ data: page, error: null });
 
 		await expect(
-			replaceProvisionalConversationTitle(
-				client,
-				'20000000-0000-4000-8000-000000000000',
-				'10000000-0000-4000-8000-000000000000',
-				'Provisorisk titel',
-				'Genererad titel'
-			)
-		).resolves.toBeNull();
+			getOwnedConversationPage({ rpc } as unknown as SupabaseClient, USER_ID, CONVERSATION_ID, null)
+		).resolves.toEqual(page);
+		expect(rpc).toHaveBeenCalledWith('get_conversation_page', {
+			p_user_id: USER_ID,
+			p_conversation_id: CONVERSATION_ID,
+			p_before_created_at: null,
+			p_before_turn_id: null,
+			p_turn_limit: 20
+		});
+	});
+
+	it('requests fifteen turns before the supplied cursor', async () => {
+		const page = conversationPage();
+		const rpc = vi.fn().mockResolvedValue({ data: page, error: null });
+		const before = {
+			createdAt: '2026-08-05T10:00:00.000Z',
+			turnId: '30000000-0000-4000-8000-000000000000'
+		};
+
+		await getOwnedConversationPage(
+			{ rpc } as unknown as SupabaseClient,
+			USER_ID,
+			CONVERSATION_ID,
+			before
+		);
+
+		expect(rpc).toHaveBeenCalledWith('get_conversation_page', {
+			p_user_id: USER_ID,
+			p_conversation_id: CONVERSATION_ID,
+			p_before_created_at: before.createdAt,
+			p_before_turn_id: before.turnId,
+			p_turn_limit: 15
+		});
 	});
 });
 
-function createUpdateBuilder(data: unknown) {
-	const builder = {
-		update: vi.fn(),
-		eq: vi.fn(),
-		select: vi.fn(),
-		maybeSingle: vi.fn(async () => ({ data, error: null }))
-	};
-	builder.update.mockReturnValue(builder);
-	builder.eq.mockReturnValue(builder);
-	builder.select.mockReturnValue(builder);
-	return builder;
-}
+const USER_ID = '10000000-0000-4000-8000-000000000000';
+const CONVERSATION_ID = '20000000-0000-4000-8000-000000000000';
 
-function conversation(index: number): ConversationSummary {
-	const sequence = String(index).padStart(12, '0');
-	const timestamp = new Date(Date.UTC(2026, 7, 6, 12, 0, -index)).toISOString();
-
+function conversationPage(): ConversationDetailPage {
 	return {
-		id: `00000000-0000-4000-8000-${sequence}`,
-		title: `Konversation ${index}`,
-		createdAt: timestamp,
-		updatedAt: timestamp,
-		lastMessageAt: timestamp
+		id: CONVERSATION_ID,
+		title: 'Test',
+		createdAt: '2026-08-06T10:00:00.000Z',
+		updatedAt: '2026-08-06T10:00:00.000Z',
+		lastMessageAt: '2026-08-06T10:00:00.000Z',
+		messages: [],
+		journalRecords: [],
+		olderCursor: null
 	};
 }

@@ -75,10 +75,57 @@ function isChatStreamEvent(value: unknown): value is ChatStreamEvent {
 	if (event.type === 'delta' || event.type === 'replace') return typeof event.text === 'string';
 	if (event.type === 'conversation') return isObject(event.conversation) && isObject(event.message);
 	if (event.type === 'done') return isObject(event.conversation) && isObject(event.message);
+	if (event.type === 'journal_record_created') return isJournalRecord(event.record);
 	if (event.type === 'error') {
-		return typeof event.code === 'string' && typeof event.message === 'string';
+		return (
+			typeof event.code === 'string' &&
+			typeof event.message === 'string' &&
+			typeof event.retryable === 'boolean'
+		);
 	}
 	return false;
+}
+
+function isJournalRecord(value: unknown): boolean {
+	if (
+		!isObject(value) ||
+		value.kind !== 'meal' ||
+		!isObject(value.reference) ||
+		value.reference.type !== 'meal' ||
+		typeof value.reference.recordId !== 'string' ||
+		typeof value.reference.committedRevision !== 'number' ||
+		!isObject(value.value)
+	) {
+		return false;
+	}
+	return (
+		typeof value.value.id === 'string' &&
+		typeof value.value.revision === 'number' &&
+		(value.value.mealType === null || typeof value.value.mealType === 'string') &&
+		Array.isArray(value.value.items) &&
+		value.value.items.every(isMealItem) &&
+		isObject(value.value.occurrence) &&
+		typeof value.value.occurrence.precision === 'string' &&
+		typeof value.value.createdAt === 'string' &&
+		typeof value.value.updatedAt === 'string'
+	);
+}
+
+function isMealItem(value: unknown): boolean {
+	return (
+		isObject(value) &&
+		typeof value.id === 'string' &&
+		typeof value.name === 'string' &&
+		(value.amountText === null || typeof value.amountText === 'string') &&
+		Array.isArray(value.ingredients) &&
+		value.ingredients.every(
+			(ingredient) =>
+				isObject(ingredient) &&
+				typeof ingredient.id === 'string' &&
+				typeof ingredient.name === 'string' &&
+				(ingredient.amountText === null || typeof ingredient.amountText === 'string')
+		)
+	);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

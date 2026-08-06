@@ -8,8 +8,14 @@
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import { tick } from 'svelte';
 	import type { Attachment } from 'svelte/attachments';
-	import { formatConversationDate } from '../conversation-date';
+	import { getConversationDatePresentation } from '../conversation-date';
 	import type { ConversationSummary } from '../contracts';
+
+	type ConversationGroup = {
+		key: string;
+		label: string;
+		items: Array<{ conversation: ConversationSummary; dateLabel: string }>;
+	};
 
 	let {
 		conversations,
@@ -48,6 +54,26 @@
 		{ id: 'second', titleWidth: '48%' },
 		{ id: 'third', titleWidth: '70%' }
 	] as const;
+	let conversationGroups = $derived(groupConversations(conversations));
+
+	function groupConversations(items: ConversationSummary[]): ConversationGroup[] {
+		const now = new Date();
+		const groups: ConversationGroup[] = [];
+
+		for (const conversation of items) {
+			const presentation = getConversationDatePresentation(conversation.lastMessageAt, now);
+			let group = groups.find((item) => item.key === presentation.groupKey);
+
+			if (!group) {
+				group = { key: presentation.groupKey, label: presentation.groupLabel, items: [] };
+				groups.push(group);
+			}
+
+			group.items.push({ conversation, dateLabel: presentation.dateLabel });
+		}
+
+		return groups;
+	}
 
 	function setConversationMenuOpen(conversationId: string, open: boolean) {
 		if (open) {
@@ -142,6 +168,81 @@
 	</div>
 {/snippet}
 
+{#snippet conversationRow(conversation: ConversationSummary, dateLabel: string)}
+	<li
+		class={{
+			active: conversation.id === activeConversationId,
+			'menu-open': conversation.id === openConversationMenuId,
+			editing: conversation.id === editingConversationId
+		}}
+	>
+		{#if conversation.id === editingConversationId}
+			<form
+				class="rename-form"
+				onsubmit={(event) => {
+					event.preventDefault();
+					void saveRenamedConversation();
+				}}
+			>
+				<input
+					bind:this={renameInput}
+					bind:value={renameTitle}
+					class="rename-input"
+					aria-label={`Nytt namn för ${conversation.title}`}
+					aria-describedby={renameError ? `rename-error-${conversation.id}` : undefined}
+					aria-invalid={renameError ? 'true' : undefined}
+					maxlength="160"
+					disabled={renamePending}
+					onblur={() => void saveRenamedConversation()}
+					onkeydown={handleRenameKeydown}
+				/>
+				{#if renameError}
+					<span class="sr-only" id={`rename-error-${conversation.id}`} role="alert"
+						>{renameError}</span
+					>
+				{/if}
+			</form>
+		{:else}
+			<button class="conversation-button" type="button" onclick={() => onSelect(conversation.id)}>
+				<span>{conversation.title}</span>
+				<time datetime={conversation.lastMessageAt}>{dateLabel}</time>
+			</button>
+		{/if}
+		<div class="conversation-menu">
+			<Popover
+				open={conversation.id === openConversationMenuId}
+				placement="bottom-end"
+				size="sm"
+				role="menu"
+				width="max-content"
+				onOpenChange={(open) => setConversationMenuOpen(conversation.id, open)}
+			>
+				{#snippet trigger(menuOpen, toggle)}
+					<Button
+						variant="ghost"
+						size="md"
+						leadingIcon={MoreHorizontalIcon}
+						aria-label={`Meny för ${conversation.title}`}
+						aria-haspopup="menu"
+						aria-expanded={menuOpen}
+						onclick={toggle}
+					/>
+				{/snippet}
+				<PopoverItem leadingIcon={EditIcon} onclick={() => void startRenaming(conversation)}>
+					Byt namn
+				</PopoverItem>
+				<PopoverItem
+					variant="destructive"
+					leadingIcon={DeleteIcon}
+					onclick={() => onDelete(conversation.id)}
+				>
+					Radera konversation
+				</PopoverItem>
+			</Popover>
+		</div>
+	</li>
+{/snippet}
+
 <section
 	class="conversation-list"
 	aria-label="Sparade konversationer"
@@ -154,88 +255,18 @@
 	{:else if conversations.length === 0}
 		<p class="state">Inga konversationer ännu.</p>
 	{:else}
-		<ul>
-			{#each conversations as conversation (conversation.id)}
-				<li
-					class={{
-						active: conversation.id === activeConversationId,
-						'menu-open': conversation.id === openConversationMenuId,
-						editing: conversation.id === editingConversationId
-					}}
-				>
-					{#if conversation.id === editingConversationId}
-						<form
-							class="rename-form"
-							onsubmit={(event) => {
-								event.preventDefault();
-								void saveRenamedConversation();
-							}}
-						>
-							<input
-								bind:this={renameInput}
-								bind:value={renameTitle}
-								class="rename-input"
-								aria-label={`Nytt namn för ${conversation.title}`}
-								aria-describedby={renameError ? `rename-error-${conversation.id}` : undefined}
-								aria-invalid={renameError ? 'true' : undefined}
-								maxlength="160"
-								disabled={renamePending}
-								onblur={() => void saveRenamedConversation()}
-								onkeydown={handleRenameKeydown}
-							/>
-							{#if renameError}
-								<span class="sr-only" id={`rename-error-${conversation.id}`} role="alert"
-									>{renameError}</span
-								>
-							{/if}
-						</form>
-					{:else}
-						<button
-							class="conversation-button"
-							type="button"
-							onclick={() => onSelect(conversation.id)}
-						>
-							<span>{conversation.title}</span>
-							<time datetime={conversation.lastMessageAt}
-								>{formatConversationDate(conversation.lastMessageAt)}</time
-							>
-						</button>
-					{/if}
-					<div class="conversation-menu">
-						<Popover
-							open={conversation.id === openConversationMenuId}
-							placement="bottom-end"
-							size="sm"
-							role="menu"
-							width="max-content"
-							onOpenChange={(open) => setConversationMenuOpen(conversation.id, open)}
-						>
-							{#snippet trigger(menuOpen, toggle)}
-								<Button
-									variant="ghost"
-									size="md"
-									leadingIcon={MoreHorizontalIcon}
-									aria-label={`Meny för ${conversation.title}`}
-									aria-haspopup="menu"
-									aria-expanded={menuOpen}
-									onclick={toggle}
-								/>
-							{/snippet}
-							<PopoverItem leadingIcon={EditIcon} onclick={() => void startRenaming(conversation)}>
-								Byt namn
-							</PopoverItem>
-							<PopoverItem
-								variant="destructive"
-								leadingIcon={DeleteIcon}
-								onclick={() => onDelete(conversation.id)}
-							>
-								Radera konversation
-							</PopoverItem>
-						</Popover>
-					</div>
-				</li>
+		<div class="conversation-groups">
+			{#each conversationGroups as group (group.key)}
+				<section class="conversation-group" aria-labelledby={`conversation-group-${group.key}`}>
+					<h3 id={`conversation-group-${group.key}`}>{group.label}</h3>
+					<ul>
+						{#each group.items as item (item.conversation.id)}
+							{@render conversationRow(item.conversation, item.dateLabel)}
+						{/each}
+					</ul>
+				</section>
 			{/each}
-		</ul>
+		</div>
 	{/if}
 
 	{#if hasMore || loadingMore || loadMoreError}
@@ -265,6 +296,27 @@
 		scrollbar-width: thin;
 	}
 
+	.conversation-groups {
+		display: flex;
+		flex-direction: column;
+		gap: 0.85rem;
+	}
+
+	.conversation-group {
+		display: grid;
+		gap: 0.2rem;
+	}
+
+	.conversation-group h3 {
+		margin: 0;
+		padding: 0.25rem 0.65rem 0.2rem;
+		color: var(--muted);
+		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+		font-size: 1.05rem;
+		font-weight: 400;
+		line-height: 1.25;
+	}
+
 	ul {
 		display: flex;
 		flex-direction: column;
@@ -279,7 +331,7 @@
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) 2.5rem;
 		align-items: center;
-		border-radius: 0.65rem;
+		border-radius: 0.5rem;
 	}
 
 	li:hover,
@@ -305,7 +357,7 @@
 		align-items: center;
 		min-width: 0;
 		gap: 0.75rem;
-		padding: 0.4rem 0.65rem;
+		padding: 0.3rem 0.65rem;
 		text-align: left;
 	}
 
@@ -313,7 +365,7 @@
 		overflow: hidden;
 		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
 		font-size: 1rem;
-		font-weight: 435;
+		font-weight: 400;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
@@ -327,7 +379,7 @@
 		grid-column: 1 / -1;
 		grid-row: 1;
 		box-sizing: border-box;
-		padding: 0.4rem 0.65rem;
+		padding: 0.3rem 0.65rem;
 	}
 
 	.rename-input {
@@ -341,7 +393,7 @@
 		color: var(--text);
 		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
 		font-size: 1rem;
-		font-weight: 435;
+		font-weight: 400;
 		line-height: 1.25;
 	}
 

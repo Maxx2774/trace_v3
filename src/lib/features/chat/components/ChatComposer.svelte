@@ -7,12 +7,14 @@
 		disabled = false,
 		onSubmit,
 		streaming = false,
+		stoppable,
 		onStop
 	}: {
 		autoFocus?: boolean;
 		disabled?: boolean;
 		onSubmit: (message: string) => void;
 		streaming?: boolean;
+		stoppable?: boolean;
 		onStop?: () => void;
 	} = $props();
 
@@ -20,6 +22,7 @@
 	let textarea = $state<HTMLTextAreaElement | null>(null);
 	let textareaHeight = $state(30);
 	let canSubmit = $derived(message.trim().length > 0 && !disabled && !streaming);
+	let showStop = $derived(streaming && (stoppable ?? true));
 	let limitReached = $derived(message.length >= 5_000);
 	const singleLineHeight = 30;
 	const singleLineTolerance = 12;
@@ -62,6 +65,7 @@
 	}
 
 	function stop() {
+		if (!showStop) return;
 		onStop?.();
 	}
 
@@ -98,7 +102,7 @@
 		oninput={resize}
 		onkeydown={submitOnEnter}></textarea>
 
-	{#if streaming}
+	{#if showStop}
 		<button class="submit-button stop-button" type="button" aria-label="Avbryt svar" onclick={stop}>
 			<span class="stop-icon" aria-hidden="true"></span>
 		</button>
@@ -121,7 +125,7 @@
 		position: relative;
 		width: 100%;
 		height: auto;
-		min-height: 9rem;
+		min-height: var(--composer-min-height, 9rem);
 		max-height: 12rem;
 		align-items: start;
 		column-gap: 0.75rem;

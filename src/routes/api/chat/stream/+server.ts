@@ -1,10 +1,12 @@
 import {
-	CHAT_CONTEXT_MAX_CHARACTERS,
-	CHAT_HISTORY_MAX_TURNS,
 	CHAT_MESSAGE_MAX_LENGTH,
 	type ChatHttpError,
 	type ChatStreamRequest
 } from '$lib/features/chat/contracts';
+import {
+	ModelContextConversationNotFoundError,
+	prepareModelContext
+} from '$lib/server/chat/history';
 import { CHAT_SYSTEM_PROMPT } from '$lib/server/chat/model';
 import { createChatResponseStream } from '$lib/server/chat/stream';
 import { beginChatTurn } from '$lib/server/chat/turns';
@@ -29,50 +31,51 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		return apiError(503, 'not_configured', 'Chatten är inte konfigurerad ännu.');
 	}
 
-	const dbStartedAt = performance.now();
-	let beginResult;
+	const contextStartedAt = performance.now();
+	let modelContext;
 	try {
-		beginResult = await beginChatTurn(adminClient, {
+		modelContext = await prepareModelContext(adminClient, {
 			userId,
 			conversationId: parsed.input.conversationId,
 			turnId: parsed.input.turnId,
-			content: parsed.input.message,
+			message: parsed.input.message,
 			systemPrompt: CHAT_SYSTEM_PROMPT,
-			maxTurns: CHAT_HISTORY_MAX_TURNS,
-			characterBudget: CHAT_CONTEXT_MAX_CHARACTERS
+			timezone: parsed.input.timezone,
+			now: new Date()
 		});
-	} catch {
+	} catch (cause) {
+		if (cause instanceof ModelContextConversationNotFoundError) {
+			return apiError(404, 'not_found', cause.message);
+		}
 		return apiError(500, 'persistence_error', 'Meddelandet kunde inte sparas.');
 	}
-	const dbBeginMs = performance.now() - dbStartedAt;
-
-	if (beginResult.status === 'not_found') {
-		return apiError(404, 'not_found', 'Konversationen hittades inte.');
-	}
-	if (beginResult.status === 'conflict') {
-		return apiError(409, 'turn_conflict', 'Meddelandet kan inte återanvändas för denna tur.');
-	}
-	if (beginResult.status === 'pending') {
-		return apiError(409, 'turn_pending', 'Ett svar för meddelandet pågår redan.');
-	}
+	const contextMs = performance.now() - contextStartedAt;
+	const beginPromise = beginChatTurn(adminClient, {
+		userId,
+		conversationId: parsed.input.conversationId,
+		turnId: parsed.input.turnId,
+		content: parsed.input.message
+	});
 
 	return new Response(
 		createChatResponseStream({
 			adminClient,
-			beginResult,
+			beginPromise,
+			modelInput: modelContext.messages,
 			userId,
 			turnId: parsed.input.turnId,
 			requestSignal: request.signal,
 			requestId,
-			dbBeginMs,
-			isNewConversation: parsed.input.conversationId === null
+			isNewConversation: parsed.input.conversationId === null,
+			userMessage: parsed.input.message
 		}),
 		{
 			headers: {
 				'content-type': 'application/x-ndjson; charset=utf-8',
 				'cache-control': 'no-store',
 				'x-content-type-options': 'nosniff',
-				'x-request-id': requestId
+				'x-request-id': requestId,
+				'server-timing': `context;dur=${contextMs.toFixed(1)}`
 			}
 		}
 	);
@@ -95,9 +98,15 @@ async function parseRequest(
 	const candidate = body as Record<string, unknown>;
 	const message = typeof candidate.message === 'string' ? candidate.message.trim() : '';
 	const turnId = typeof candidate.turnId === 'string' ? candidate.turnId : '';
+	const timezone = typeof candidate.timezone === 'string' ? candidate.timezone : '';
 	const conversationId = candidate.conversationId;
 
-	if (!message || message.length > CHAT_MESSAGE_MAX_LENGTH || !UUID_PATTERN.test(turnId)) {
+	if (
+		!message ||
+		message.length > CHAT_MESSAGE_MAX_LENGTH ||
+		!UUID_PATTERN.test(turnId) ||
+		!validTimezone(timezone)
+	) {
 		return { response: apiError(400, 'invalid_input', 'Meddelandet är ogiltigt.') };
 	}
 
@@ -111,9 +120,20 @@ async function parseRequest(
 		input: {
 			conversationId: typeof conversationId === 'string' ? conversationId : null,
 			turnId,
-			message
+			message,
+			timezone
 		}
 	};
+}
+
+function validTimezone(timezone: string): boolean {
+	if (!timezone || timezone.length > 255) return false;
+	try {
+		new Intl.DateTimeFormat('sv-SE', { timeZone: timezone }).format();
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 function apiError(status: number, code: string, message: string): Response {

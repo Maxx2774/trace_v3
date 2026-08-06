@@ -126,17 +126,17 @@
 	}
 
 	.secondary {
-		border: 0;
-		background: var(--surface-hover);
+		border: 1px solid var(--border);
+		background: var(--popover-background);
 		color: var(--text);
 	}
 
 	.secondary:hover {
-		background: var(--surface-active);
+		background: var(--surface-hover);
 	}
 
 	.secondary:active {
-		background: color-mix(in srgb, var(--text) 16%, transparent);
+		background: var(--surface-active);
 	}
 
 	.ghost {

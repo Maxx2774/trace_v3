@@ -3,7 +3,7 @@ import { requireAuthenticatedUserId } from '$lib/server/auth';
 import {
 	ConversationNotFoundError,
 	deleteOwnedConversation,
-	getOwnedConversation,
+	getOwnedConversationPage,
 	listOwnedConversations,
 	renameOwnedConversation
 } from '$lib/server/chat/conversations';
@@ -22,6 +22,14 @@ const conversationCursorSchema = v.nullable(
 		lastMessageAt: v.pipe(v.string(), v.isoTimestamp())
 	})
 );
+const conversationHistoryCursorSchema = v.object({
+	createdAt: v.pipe(v.string(), v.isoTimestamp()),
+	turnId: uuidSchema
+});
+const getConversationSchema = v.object({
+	id: uuidSchema,
+	before: v.nullable(conversationHistoryCursorSchema)
+});
 
 export const listConversations = query(conversationCursorSchema, async (cursor) => {
 	const event = getRequestEvent();
@@ -29,12 +37,12 @@ export const listConversations = query(conversationCursorSchema, async (cursor) 
 	return listOwnedConversations(event.locals.supabase, userId, cursor);
 });
 
-export const getConversation = query(uuidSchema, async (conversationId) => {
+export const getConversation = query(getConversationSchema, async ({ id, before }) => {
 	const event = getRequestEvent();
 	const userId = requireAuthenticatedUserId(event);
 
 	try {
-		return await getOwnedConversation(event.locals.supabase, userId, conversationId);
+		return await getOwnedConversationPage(getAdminSupabaseClient(), userId, id, before);
 	} catch (cause) {
 		if (cause instanceof ConversationNotFoundError) error(404, cause.message);
 		throw cause;

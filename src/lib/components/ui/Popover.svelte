@@ -19,7 +19,7 @@
 		onOpenChange
 	}: {
 		trigger: Snippet<[boolean, () => void]>;
-		children: Snippet<[() => void]>;
+		children: Snippet<[(restoreFocus?: boolean) => void]>;
 		open?: boolean;
 		placement?: Placement;
 		size?: Size;

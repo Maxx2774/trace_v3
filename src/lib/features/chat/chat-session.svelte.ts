@@ -8,10 +8,13 @@ import {
 	type ChatMessage,
 	type ChatStreamEvent,
 	type ConversationCursor,
+	type ConversationHistoryCursor,
 	type ConversationPage,
 	type ConversationSummary,
 	upsertConversation
 } from './contracts';
+import type { TurnJournalRecord } from '$lib/features/journal/contracts';
+import type { Meal } from '$lib/features/meals/contracts';
 import { streamChat } from './stream-client';
 
 export type DisplayMessage = ChatMessage & { pending?: boolean };
@@ -24,11 +27,14 @@ type ActiveStream = {
 	stopRequested: boolean;
 	manualStop: boolean;
 	terminal: boolean;
+	message: string;
+	conversationId: string | null;
 };
 
 type ChatSessionOptions = {
 	initialConversationPage: ConversationPage;
 	onMessagesChanged: () => void | Promise<void>;
+	onJournalRecordCreated?: (entry: TurnJournalRecord) => void | Promise<void>;
 };
 
 export function createChatSession(options: ChatSessionOptions) {
@@ -37,6 +43,7 @@ export function createChatSession(options: ChatSessionOptions) {
 
 class ChatSession {
 	messages = $state.raw<DisplayMessage[]>([]);
+	journalRecords = $state.raw<TurnJournalRecord[]>([]);
 	conversations = $state.raw<ConversationSummary[]>([]);
 	activeConversationId = $state<string | null>(null);
 	historyOpen = $state(false);
@@ -46,11 +53,22 @@ class ChatSession {
 	historyError = $state<string | null>(null);
 	paginationError = $state<string | null>(null);
 	conversationLoading = $state(false);
+	olderMessagesLoading = $state(false);
+	olderMessagesError = $state<string | null>(null);
 	private activeStream = $state<ActiveStream | null>(null);
 	private nextConversationCursor = $state<ConversationCursor | null>(null);
+	private olderMessagesCursor = $state<ConversationHistoryCursor | null>(null);
 	private conversationSelection = 0;
+	private retryableTurn = $state<{
+		turnId: string;
+		message: string;
+		conversationId: string | null;
+	} | null>(null);
 	streaming = $derived(this.activeStream !== null);
+	canStopResponse = $derived(this.activeStream !== null && !this.activeStream.terminal);
+	canRetry = $derived(this.retryableTurn !== null && this.activeStream === null);
 	hasMoreConversations = $derived(this.nextConversationCursor !== null);
+	hasOlderMessages = $derived(this.olderMessagesCursor !== null);
 
 	constructor(private readonly options: ChatSessionOptions) {
 		this.conversations = options.initialConversationPage.conversations;
@@ -73,6 +91,7 @@ class ChatSession {
 
 		this.startedAt ??= now;
 		this.statusMessage = null;
+		this.retryableTurn = null;
 		this.messages = [
 			...this.messages,
 			{
@@ -102,7 +121,9 @@ class ChatSession {
 			persisted: false,
 			stopRequested: false,
 			manualStop: false,
-			terminal: false
+			terminal: false,
+			message,
+			conversationId: this.activeConversationId
 		};
 
 		void this.options.onMessagesChanged();
@@ -113,16 +134,27 @@ class ChatSession {
 		if (this.activeStream) return;
 		this.conversationSelection += 1;
 		this.messages = [];
+		this.journalRecords = [];
 		this.startedAt = null;
 		this.activeConversationId = null;
 		this.statusMessage = null;
+		this.retryableTurn = null;
 		this.historyError = null;
 		this.conversationLoading = false;
+		this.olderMessagesLoading = false;
+		this.olderMessagesError = null;
+		this.olderMessagesCursor = null;
 		this.historyOpen = false;
 	};
 
 	deleteConversation = async (conversationId = this.activeConversationId) => {
-		if (!conversationId || this.activeStream || this.conversationLoading) return;
+		if (
+			!conversationId ||
+			this.activeStream ||
+			this.conversationLoading ||
+			this.olderMessagesLoading
+		)
+			return;
 
 		try {
 			const { id } = await deleteConversationRemote(conversationId);
@@ -177,18 +209,27 @@ class ChatSession {
 
 		this.activeConversationId = conversationId;
 		this.messages = [];
+		this.journalRecords = [];
 		this.startedAt = summary?.createdAt ?? null;
 		this.historyOpen = false;
 		this.conversationLoading = true;
 		this.statusMessage = null;
+		this.retryableTurn = null;
 		this.historyError = null;
+		this.olderMessagesLoading = false;
+		this.olderMessagesError = null;
+		this.olderMessagesCursor = null;
 
 		try {
-			const conversation = await getConversation(conversationId);
+			const conversation = await getConversation({ id: conversationId, before: null });
 			if (selection !== this.conversationSelection) return;
 
 			this.messages = conversation.messages;
-			this.startedAt = conversation.messages[0]?.createdAt ?? conversation.createdAt;
+			this.journalRecords = conversation.journalRecords;
+			this.olderMessagesCursor = conversation.olderCursor;
+			this.startedAt = conversation.olderCursor
+				? null
+				: (conversation.messages[0]?.createdAt ?? conversation.createdAt);
 			this.updateConversationCache(conversation);
 			this.conversationLoading = false;
 			await this.options.onMessagesChanged();
@@ -201,6 +242,61 @@ class ChatSession {
 		}
 	};
 
+	loadOlderMessages = async (): Promise<boolean> => {
+		const conversationId = this.activeConversationId;
+		const before = this.olderMessagesCursor;
+		if (
+			!conversationId ||
+			!before ||
+			this.activeStream ||
+			this.conversationLoading ||
+			this.olderMessagesLoading
+		)
+			return false;
+
+		const selection = this.conversationSelection;
+		this.olderMessagesLoading = true;
+		this.olderMessagesError = null;
+
+		try {
+			const conversation = await getConversation({ id: conversationId, before });
+			if (selection !== this.conversationSelection) return false;
+
+			const existingMessageIds = new Set(this.messages.map((message) => message.id));
+			const olderMessages = conversation.messages.filter(
+				(message) => !existingMessageIds.has(message.id)
+			);
+			const existingRecordIds = new Set(
+				this.journalRecords.map((entry) => `${entry.record.kind}:${entry.record.value.id}`)
+			);
+			const olderRecords = conversation.journalRecords.filter(
+				(entry) => !existingRecordIds.has(`${entry.record.kind}:${entry.record.value.id}`)
+			);
+
+			this.messages = [...olderMessages, ...this.messages];
+			this.journalRecords = [...olderRecords, ...this.journalRecords];
+			this.olderMessagesCursor = conversation.olderCursor;
+			this.startedAt = conversation.olderCursor
+				? null
+				: (this.messages[0]?.createdAt ?? conversation.createdAt);
+			this.updateConversationCache(conversation);
+			return true;
+		} catch {
+			if (selection === this.conversationSelection) {
+				this.olderMessagesError = 'Äldre meddelanden kunde inte hämtas.';
+			}
+			return false;
+		} finally {
+			if (selection === this.conversationSelection) this.olderMessagesLoading = false;
+		}
+	};
+
+	reloadActiveConversation = () => {
+		if (this.activeConversationId && !this.activeStream) {
+			void this.selectConversation(this.activeConversationId);
+		}
+	};
+
 	close() {
 		this.requestStop(false);
 		this.historyOpen = false;
@@ -210,8 +306,50 @@ class ChatSession {
 		this.requestStop(true);
 	};
 
+	updateMealRecord = (meal: Meal) => {
+		this.journalRecords = this.journalRecords.map((entry) =>
+			entry.record.kind === 'meal' && entry.record.value.id === meal.id
+				? { ...entry, record: { ...entry.record, value: meal } }
+				: entry
+		);
+	};
+
+	retryLastTurn = () => {
+		const retry = this.retryableTurn;
+		if (!retry || this.activeStream || this.conversationLoading) return;
+
+		const assistantId = crypto.randomUUID();
+		const controller = new AbortController();
+		this.statusMessage = null;
+		this.retryableTurn = null;
+		this.messages = [
+			...this.messages,
+			{
+				id: assistantId,
+				conversationId: retry.conversationId ?? '',
+				turnId: retry.turnId,
+				role: 'assistant',
+				content: '',
+				createdAt: new Date().toISOString(),
+				pending: true
+			}
+		];
+		this.activeStream = {
+			turnId: retry.turnId,
+			assistantId,
+			controller,
+			persisted: true,
+			stopRequested: false,
+			manualStop: false,
+			terminal: false,
+			message: retry.message,
+			conversationId: retry.conversationId
+		};
+		void this.runStream(retry.message, retry.conversationId, this.activeStream);
+	};
+
 	private requestStop(manual: boolean) {
-		if (!this.activeStream) return;
+		if (!this.activeStream || this.activeStream.terminal) return;
 		this.activeStream.manualStop ||= manual;
 		this.activeStream.stopRequested = true;
 		if (this.activeStream.persisted) this.activeStream.controller.abort();
@@ -220,7 +358,12 @@ class ChatSession {
 	private async runStream(message: string, conversationId: string | null, stream: ActiveStream) {
 		try {
 			await streamChat({
-				request: { conversationId, turnId: stream.turnId, message },
+				request: {
+					conversationId,
+					turnId: stream.turnId,
+					message,
+					timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+				},
 				signal: stream.controller.signal,
 				onEvent: (event) => this.handleStreamEvent(event, stream)
 			});
@@ -249,6 +392,7 @@ class ChatSession {
 
 		if (event.type === 'conversation') {
 			stream.persisted = true;
+			stream.conversationId = event.conversation.id;
 			this.activeConversationId = event.conversation.id;
 			this.messages = this.messages.map((message) =>
 				message.turnId === event.turnId && message.role === 'user'
@@ -268,6 +412,10 @@ class ChatSession {
 			this.messages = this.messages.map((message) =>
 				message.id === stream.assistantId ? { ...message, content: event.text } : message
 			);
+		} else if (event.type === 'journal_record_created') {
+			const entry = { turnId: event.turnId, record: event.record };
+			this.journalRecords = upsertJournalRecord(this.journalRecords, entry);
+			void this.options.onJournalRecordCreated?.(entry);
 		} else if (event.type === 'done') {
 			stream.terminal = true;
 			this.messages = this.messages.map((message) =>
@@ -278,6 +426,13 @@ class ChatSession {
 			stream.terminal = true;
 			this.removePendingAssistant(stream.assistantId);
 			this.statusMessage = event.message;
+			if (event.retryable) {
+				this.retryableTurn = {
+					turnId: stream.turnId,
+					message: stream.message,
+					conversationId: stream.conversationId
+				};
+			}
 		}
 	}
 
@@ -288,4 +443,17 @@ class ChatSession {
 	private updateConversationCache(conversation: ConversationSummary) {
 		this.conversations = upsertConversation(this.conversations, conversation);
 	}
+}
+
+export function upsertJournalRecord(
+	records: TurnJournalRecord[],
+	entry: TurnJournalRecord
+): TurnJournalRecord[] {
+	const existingIndex = records.findIndex(
+		(candidate) =>
+			candidate.record.kind === entry.record.kind &&
+			candidate.record.value.id === entry.record.value.id
+	);
+	if (existingIndex === -1) return [...records, entry];
+	return records.map((candidate, index) => (index === existingIndex ? entry : candidate));
 }

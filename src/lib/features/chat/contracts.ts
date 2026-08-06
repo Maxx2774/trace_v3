@@ -1,8 +1,14 @@
+import type { TurnJournalRecord } from '$lib/features/journal/contracts';
+
 export const CHAT_MESSAGE_MAX_LENGTH = 5_000;
 export const CHAT_HISTORY_MAX_TURNS = 20;
+export const CHAT_HISTORY_MAX_MESSAGES = 40;
 export const CHAT_CONTEXT_MAX_CHARACTERS = 48_000;
+export const CHAT_CONTEXT_MAX_ESTIMATED_TOKENS = 12_000;
 export const INITIAL_CONVERSATION_COUNT = 25;
 export const CONVERSATION_PAGE_SIZE = 20;
+export const INITIAL_CONVERSATION_TURN_COUNT = 20;
+export const CONVERSATION_HISTORY_TURN_PAGE_SIZE = 15;
 
 export type ChatRole = 'user' | 'assistant';
 
@@ -33,14 +39,22 @@ export type ChatMessage = {
 	createdAt: string;
 };
 
-export type ConversationDetail = ConversationSummary & {
+export type ConversationHistoryCursor = {
+	createdAt: string;
+	turnId: string;
+};
+
+export type ConversationDetailPage = ConversationSummary & {
 	messages: ChatMessage[];
+	journalRecords: TurnJournalRecord[];
+	olderCursor: ConversationHistoryCursor | null;
 };
 
 export type ChatStreamRequest = {
 	conversationId: string | null;
 	turnId: string;
 	message: string;
+	timezone: string;
 };
 
 export type ChatStreamEvent =
@@ -53,6 +67,11 @@ export type ChatStreamEvent =
 	| { type: 'delta'; turnId: string; text: string }
 	| { type: 'replace'; turnId: string; text: string }
 	| {
+			type: 'journal_record_created';
+			turnId: string;
+			record: TurnJournalRecord['record'];
+	  }
+	| {
 			type: 'done';
 			turnId: string;
 			message: ChatMessage;
@@ -61,12 +80,19 @@ export type ChatStreamEvent =
 	| {
 			type: 'error';
 			turnId: string;
+			retryable: boolean;
 			code:
 				| 'upstream_error'
 				| 'incomplete_response'
 				| 'timeout'
 				| 'empty_response'
-				| 'persistence_error';
+				| 'persistence_error'
+				| 'protocol_error'
+				| 'tool_error'
+				| 'turn_pending'
+				| 'turn_conflict'
+				| 'turn_failed_terminal'
+				| 'not_found';
 			message: string;
 	  };
 

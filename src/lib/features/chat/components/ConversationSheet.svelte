@@ -1,17 +1,22 @@
 <script lang="ts">
 	import ChevronRightIcon from '$lib/components/icons/ChevronRightIcon.svelte';
+	import CheckmarkIcon from '$lib/components/icons/CheckmarkIcon.svelte';
 	import ChatHistoryIcon from '$lib/components/icons/ChatHistoryIcon.svelte';
 	import CloseIcon from '$lib/components/icons/CloseIcon.svelte';
 	import DeleteIcon from '$lib/components/icons/DeleteIcon.svelte';
 	import MoreHorizontalIcon from '$lib/components/icons/MoreHorizontalIcon.svelte';
 	import NewConversationIcon from '$lib/components/icons/NewConversationIcon.svelte';
+	import MealCard from '$lib/features/meals/components/MealCard.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import PopoverItem from '$lib/components/ui/PopoverItem.svelte';
 	import Sheet from '$lib/components/ui/Sheet.svelte';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import { onDestroy, onMount, tick, untrack } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { cubicOut } from 'svelte/easing';
 	import { fade } from 'svelte/transition';
+	import { getRecentConversationDateLabel } from '../conversation-date';
 	import type { ConversationPage } from '../contracts';
 	import AssistantMessageLoader from './AssistantMessageLoader.svelte';
 	import ChatComposer from './ChatComposer.svelte';
@@ -28,8 +33,23 @@
 	let messageScroller = $state<HTMLElement | null>(null);
 	const session = createChatSession({
 		initialConversationPage: untrack(() => initialConversationPage),
-		onMessagesChanged: scrollToBottom
+		onMessagesChanged: scrollToBottom,
+		onJournalRecordCreated: (entry) => {
+			if (entry.record.kind === 'meal') {
+				window.dispatchEvent(new CustomEvent('tracemealcreated', { detail: entry.record.value }));
+			}
+			void scrollToBottom();
+		}
 	});
+	let recordsByTurn = $derived.by(() => {
+		const grouped = new SvelteMap<string, typeof session.journalRecords>();
+		for (const entry of session.journalRecords) {
+			const records = grouped.get(entry.turnId) ?? [];
+			grouped.set(entry.turnId, [...records, entry]);
+		}
+		return grouped;
+	});
+	let recentConversations = $derived(session.conversations.slice(0, 3));
 	let conversationActive = $derived(
 		!session.historyOpen &&
 			(session.activeConversationId !== null ||
@@ -42,15 +62,18 @@
 		const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 		const syncFullscreen = () => (fullscreen = fullscreenQuery.matches);
 		const syncMotion = () => (reducedMotion = motionQuery.matches);
+		const reloadMeal = () => session.reloadActiveConversation();
 
 		syncFullscreen();
 		syncMotion();
 		fullscreenQuery.addEventListener('change', syncFullscreen);
 		motionQuery.addEventListener('change', syncMotion);
+		window.addEventListener('tracemealreloadrequested', reloadMeal);
 
 		return () => {
 			fullscreenQuery.removeEventListener('change', syncFullscreen);
 			motionQuery.removeEventListener('change', syncMotion);
+			window.removeEventListener('tracemealreloadrequested', reloadMeal);
 		};
 	});
 
@@ -66,9 +89,50 @@
 		messageScroller?.scrollTo({ top: messageScroller.scrollHeight });
 	}
 
+	async function loadOlderMessages(scroller = messageScroller) {
+		if (!scroller) return;
+		const previousHeight = scroller.scrollHeight;
+		const loaded = await session.loadOlderMessages();
+		if (!loaded) return;
+
+		await tick();
+		scroller.scrollTop += scroller.scrollHeight - previousHeight;
+	}
+
+	function observeHistoryStart(node: HTMLElement) {
+		const scroller = node.closest<HTMLElement>('.messages');
+		if (!scroller) return;
+
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((entry) => entry.isIntersecting)) void loadOlderMessages(scroller);
+			},
+			{ root: scroller, rootMargin: '240px 0px 0px' }
+		);
+		observer.observe(node);
+		return () => observer.disconnect();
+	}
+
+	function connectMessageScroller(node: HTMLElement) {
+		messageScroller = node;
+		return () => {
+			if (messageScroller === node) messageScroller = null;
+		};
+	}
+
 	function formatTime(value: string): string {
 		const date = new Date(value);
 		return `Idag ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
+	}
+
+	function turnCompleted(turnId: string): boolean {
+		return session.messages.some(
+			(message) => message.turnId === turnId && message.role === 'assistant' && !message.pending
+		);
+	}
+
+	function turnHasRecords(turnId: string): boolean {
+		return (recordsByTurn.get(turnId)?.length ?? 0) > 0;
 	}
 
 	function blurFade(_node: Element, { duration = 300 } = {}) {
@@ -93,7 +157,7 @@
 						<h2 class="history-title">Konversationer</h2>
 					{:else if conversationActive}
 						<Button
-							variant="primary"
+							variant="secondary"
 							size="md"
 							leadingIcon={NewConversationIcon}
 							aria-label="Ny chatt"
@@ -105,18 +169,17 @@
 							variant="ghost"
 							size="md"
 							leadingIcon={ChatHistoryIcon}
-							collapseLabel={conversationActive}
 							aria-label="Konversationer"
 							aria-expanded={session.historyOpen}
-							onclick={session.openHistory}>Konversationer</Button
-						>
+							onclick={session.openHistory}
+						/>
 					{/if}
 				</div>
 
 				<div class="toolbar-end">
 					{#if session.historyOpen}
 						<Button
-							variant="primary"
+							variant="secondary"
 							size={fullscreen ? 'lg' : 'md'}
 							leadingIcon={NewConversationIcon}
 							aria-label="Ny konversation"
@@ -128,11 +191,10 @@
 							variant="ghost"
 							size="md"
 							leadingIcon={ChatHistoryIcon}
-							collapseLabel
 							aria-label="Konversationer"
 							aria-expanded={session.historyOpen}
-							onclick={session.openHistory}>Konversationer</Button
-						>
+							onclick={session.openHistory}
+						/>
 
 						<Popover placement="bottom-end" size="sm" role="menu" width="max-content">
 							{#snippet trigger(menuOpen, toggle)}
@@ -150,7 +212,9 @@
 							<PopoverItem
 								variant="destructive"
 								leadingIcon={DeleteIcon}
-								disabled={session.streaming || session.conversationLoading}
+								disabled={session.streaming ||
+									session.conversationLoading ||
+									session.olderMessagesLoading}
 								onclick={() => session.deleteConversation()}>Radera konversation</PopoverItem
 							>
 						</Popover>
@@ -186,24 +250,68 @@
 						/>
 					</div>
 				{:else}
-					<div class="chat-view" in:fade={{ duration: 180 }} out:fade={{ duration: 140 }}>
+					<div
+						class={['chat-view', !conversationActive && 'new-conversation']}
+						in:fade={{ duration: 180 }}
+						out:fade={{ duration: 140 }}
+					>
 						<section
 							class="messages"
 							aria-label="Konversationsmeddelanden"
-							aria-busy={session.conversationLoading}
-							bind:this={messageScroller}
+							aria-busy={session.conversationLoading || session.olderMessagesLoading}
+							{@attach connectMessageScroller}
 						>
 							{#if !session.conversationLoading}
 								<div class="message-content" in:blurFade={{ duration: 300 }}>
+									{#if session.olderMessagesError}
+										<div class="older-messages-error" role="status">
+											<span>{session.olderMessagesError}</span>
+											<button type="button" onclick={() => void loadOlderMessages()}
+												>Försök igen</button
+											>
+										</div>
+									{:else if session.hasOlderMessages}
+										<div class="history-start" {@attach observeHistoryStart}>
+											{#if session.olderMessagesLoading}
+												<div
+													class="older-message-skeletons"
+													role="status"
+													aria-label="Laddar äldre meddelanden"
+												>
+													<Skeleton width="62%" height="2.4rem" radius="1rem" />
+													<Skeleton width="78%" height="3.2rem" radius="0.75rem" />
+													<Skeleton width="54%" height="2.4rem" radius="1rem" />
+												</div>
+											{/if}
+										</div>
+									{/if}
 									{#if session.startedAt}
 										<time datetime={session.startedAt}>{formatTime(session.startedAt)}</time>
 									{/if}
 									{#each session.messages as message (message.id)}
 										{#if message.role === 'user'}
 											<article class="user-message"><p>{message.content}</p></article>
-										{:else if message.content}
+											{@const records = recordsByTurn.get(message.turnId) ?? []}
+											{#if records.length > 0}
+												<div class="turn-records">
+													<p class="registration-status" role="status">
+														<CheckmarkIcon />
+														<span>Registrerat</span>
+													</p>
+													{#each records as entry (entry.record.value.id)}
+														{#if entry.record.kind === 'meal'}
+															<MealCard
+																meal={entry.record.value}
+																editable={turnCompleted(message.turnId)}
+																onUpdated={session.updateMealRecord}
+															/>
+														{/if}
+													{/each}
+												</div>
+											{/if}
+										{:else if message.content && (!turnHasRecords(message.turnId) || message.content !== 'Registrerat')}
 											<AssistantMessageLoader content={message.content} />
-										{:else if message.pending}
+										{:else if message.pending && !turnHasRecords(message.turnId)}
 											<p class="formulating-status" data-text="Formulerar svar" role="status">
 												Formulerar svar
 											</p>
@@ -211,6 +319,11 @@
 									{/each}
 									{#if session.statusMessage}
 										<p class="status-message" role="status">{session.statusMessage}</p>
+										{#if session.canRetry}
+											<button class="retry-button" type="button" onclick={session.retryLastTurn}>
+												Försök igen
+											</button>
+										{/if}
 									{/if}
 								</div>
 							{/if}
@@ -222,9 +335,30 @@
 								disabled={session.conversationLoading}
 								onSubmit={session.submit}
 								streaming={session.streaming}
+								stoppable={session.canStopResponse}
 								onStop={session.stopResponse}
 							/>
 						</div>
+
+						{#if !conversationActive && recentConversations.length > 0}
+							<nav class="recent-conversations" aria-label="Senaste konversationer">
+								<ul>
+									{#each recentConversations as conversation (conversation.id)}
+										<li>
+											<button
+												type="button"
+												onclick={() => session.selectConversation(conversation.id)}
+											>
+												<span>{conversation.title}</span>
+												<time datetime={conversation.lastMessageAt}>
+													{getRecentConversationDateLabel(conversation.lastMessageAt)}
+												</time>
+											</button>
+										</li>
+									{/each}
+								</ul>
+							</nav>
+						{/if}
 					</div>
 				{/if}
 			</div>
@@ -323,8 +457,8 @@
 
 	.history-title {
 		margin: 0 0 0 0.65rem;
-		color: color-mix(in srgb, var(--text) 58%, transparent);
-		font-size: 1.25rem;
+		color: var(--text);
+		font-size: 1.53rem;
 		font-weight: 400;
 		line-height: 1.2;
 	}
@@ -356,8 +490,86 @@
 		grid-template-rows: minmax(0, 1fr) auto;
 	}
 
+	.chat-view.new-conversation {
+		grid-template-rows: minmax(2rem, 0.42fr) auto auto minmax(2rem, 0.58fr);
+	}
+
+	.chat-view.new-conversation .composer-shell {
+		--composer-min-height: 7.5rem;
+
+		margin-inline: 2rem;
+		border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+		border-radius: 1rem;
+		background: var(--background);
+		box-shadow: 0 0.75rem 2rem rgb(23 32 51 / 10%);
+	}
+
+	.recent-conversations {
+		min-width: 0;
+		margin: 0.65rem 2rem 0;
+	}
+
+	.recent-conversations ul {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.recent-conversations button {
+		display: grid;
+		width: 100%;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 0.75rem;
+		box-sizing: border-box;
+		border: 0;
+		border-radius: 0.5rem;
+		padding: 0.45rem 0.65rem;
+		background: transparent;
+		color: color-mix(in srgb, var(--muted) 78%, transparent);
+		font-family: 'General Sans', ui-sans-serif, system-ui, sans-serif;
+		font-size: 1.1rem;
+		font-weight: 400;
+		line-height: 1.25;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			background 140ms ease,
+			color 140ms ease;
+	}
+
+	.recent-conversations button:hover,
+	.recent-conversations button:active {
+		background: color-mix(in srgb, var(--text) 5%, transparent);
+		color: var(--text);
+	}
+
+	.recent-conversations span {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.recent-conversations time {
+		color: color-mix(in srgb, var(--muted) 78%, transparent);
+		font-size: 1.1rem;
+		font-variant-numeric: tabular-nums;
+		line-height: inherit;
+		white-space: nowrap;
+		transition: color 140ms ease;
+	}
+
+	.recent-conversations button:hover time,
+	.recent-conversations button:active time {
+		color: var(--text);
+	}
+
 	.messages {
 		padding: 1rem 1rem 1.5rem;
+		overflow-anchor: none;
 	}
 
 	.message-content {
@@ -367,10 +579,45 @@
 		gap: 1.5rem;
 	}
 
+	.history-start {
+		min-height: 1px;
+	}
+
+	.older-message-skeletons {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		padding-bottom: 0.75rem;
+	}
+
+	.older-message-skeletons :global(.skeleton:nth-child(odd)) {
+		align-self: flex-end;
+	}
+
+	.older-messages-error {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.35rem;
+		color: var(--muted);
+		font-size: 0.82rem;
+	}
+
+	.older-messages-error button {
+		border: 0;
+		padding: 0.15rem 0.25rem;
+		background: transparent;
+		color: var(--text);
+		font: inherit;
+		text-decoration: underline;
+		text-underline-offset: 0.14em;
+		cursor: pointer;
+	}
+
 	time {
 		align-self: center;
 		color: color-mix(in srgb, var(--muted) 78%, transparent);
-		font-size: 0.85rem;
+		font-size: 0.95rem;
 		line-height: 1;
 	}
 
@@ -392,6 +639,28 @@
 	.user-message p {
 		margin: 0;
 		white-space: pre-wrap;
+	}
+
+	.turn-records {
+		display: flex;
+		align-self: stretch;
+		flex-direction: column;
+		gap: 0.65rem;
+	}
+
+	.registration-status {
+		--icon-size: 1.4em;
+
+		display: inline-flex;
+		align-self: flex-start;
+		align-items: center;
+		gap: 0.2rem;
+		margin: 0;
+		color: var(--accent);
+		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+		font-size: 0.95rem;
+		font-weight: 435;
+		line-height: 1.3;
 	}
 
 	.formulating-status {
@@ -447,6 +716,18 @@
 		font-size: 0.82rem;
 		line-height: 1.35;
 		text-align: center;
+	}
+
+	.retry-button {
+		align-self: center;
+		border: 0;
+		padding: 0.2rem 0.35rem;
+		background: transparent;
+		color: var(--text);
+		font-size: 0.82rem;
+		text-decoration: underline;
+		text-underline-offset: 0.16em;
+		cursor: pointer;
 	}
 
 	.composer-shell {
@@ -518,6 +799,10 @@
 
 	:global(:root[data-theme='dark']) .user-message {
 		background: var(--surface-hover);
+	}
+
+	:global(:root[data-theme='dark']) .chat-view.new-conversation .composer-shell {
+		box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 34%);
 	}
 
 	:global(:root[data-theme='dark']) .close-tab {
