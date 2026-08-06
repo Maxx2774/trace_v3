@@ -5,6 +5,7 @@
 - Keep reusable UI in `lib/components/ui`, feature behavior in `lib/features`, and secrets or authority on the server.
 - Validate authenticated identity with Supabase `getClaims()` on the server. Never authorize from client state.
 - Preserve unrelated work and verify every changed behavior before claiming completion.
+- Use icons only from [fluenticon.com](https://fluenticon.com/). Do not introduce icons from other libraries or sources.
 - Keep `docs/capabilities.md` synchronized with verified user-visible functionality and
   limitations. Update it in the same change when a capability is added, removed, or
   meaningfully changed; do not put planned functionality there.
@@ -34,6 +35,26 @@
   is identified.
 - Reproduce bugs when practical, run checks proportional to risk, and never claim
   unverified behavior.
+
+## Execute approved plans completely
+
+- When the user explicitly asks to implement or execute an existing plan, treat that
+  request as authorization for every in-scope step the plan already specifies. This
+  includes creating and applying database migrations, updating configured development
+  services, running verification, and synchronizing documentation. Do not ask for
+  redundant confirmation for individual planned steps.
+- The Supabase project configured by this repository's git-ignored `.env.local` is the
+  Trace v3 development environment, not production, unless the user explicitly says
+  otherwise. It is in scope for migrations required by an approved implementation plan.
+- Ask for new direction only when the target is ambiguous, the action would affect a
+  production or otherwise unscoped system, or it would destroy user data in a way the
+  approved plan did not already make explicit.
+- Sequence schema and dependent application changes as one complete operation. If a
+  platform permission boundary still blocks a planned external action, surface it before
+  switching dependent app code; never hand off or claim success with incompatible app
+  and database contracts.
+- A plan is not complete until its stated end-to-end checks have run against the same
+  development environment that received the change.
 
 ## Authenticated browser testing
 
