@@ -20,7 +20,7 @@ const input: UpdateMealInput = {
 		occurredAt: null,
 		occurredOn: '2026-08-06',
 		timezone: 'Europe/Stockholm',
-		timeExpression: null
+		timePeriod: null
 	},
 	items: [
 		{
@@ -57,7 +57,7 @@ describe('updateOwnedMeal', () => {
 			p_occurred_at: null,
 			p_occurred_on: '2026-08-06',
 			p_timezone: 'Europe/Stockholm',
-			p_time_expression: null,
+			p_time_period: null,
 			p_items: input.items
 		});
 	});
@@ -87,7 +87,7 @@ describe('mapMeal', () => {
 			occurred_at: null,
 			occurred_on: null,
 			timezone: null,
-			time_expression: null,
+			time_period: null,
 			created_at: '2026-08-06T18:00:00.000Z',
 			updated_at: '2026-08-06T18:01:00.000Z',
 			meal_items: [

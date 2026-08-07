@@ -6,6 +6,7 @@ import type {
 	MealType,
 	UpdateMealInput
 } from '$lib/features/meals/contracts';
+import { isMealTimePeriod } from '$lib/features/meals/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 type MealIngredientRow = {
@@ -33,7 +34,7 @@ type MealRow = {
 	occurred_at: string | null;
 	occurred_on: string | null;
 	timezone: string | null;
-	time_expression: string | null;
+	time_period: string | null;
 	created_at: string;
 	updated_at: string;
 	meal_items: MealItemRow[] | null;
@@ -57,7 +58,7 @@ export class MealRevisionConflictError extends Error {}
 export class MealMutationConflictError extends Error {}
 
 const MEAL_SELECTION =
-	'id,revision,meal_type,source_turn_id,source_operation_id,occurred_precision,occurred_at,occurred_on,timezone,time_expression,created_at,updated_at,meal_items(id,position,name,amount_text,meal_item_ingredients(id,position,name,amount_text))';
+	'id,revision,meal_type,source_turn_id,source_operation_id,occurred_precision,occurred_at,occurred_on,timezone,time_period,created_at,updated_at,meal_items(id,position,name,amount_text,meal_item_ingredients(id,position,name,amount_text))';
 
 export async function createMealFromChat(
 	client: SupabaseClient,
@@ -168,36 +169,63 @@ export function mapMeal(row: MealRow): Meal {
 }
 
 function mapOccurrence(row: MealRow): MealOccurrence {
-	if (row.occurred_precision === 'exact' && row.occurred_at && row.occurred_on && row.timezone) {
+	if (
+		row.occurred_precision === 'exact' &&
+		row.occurred_at &&
+		row.occurred_on &&
+		row.timezone &&
+		row.time_period === null
+	) {
 		return {
 			precision: 'exact',
 			occurredAt: row.occurred_at,
 			occurredOn: row.occurred_on,
 			timezone: row.timezone,
-			timeExpression: row.time_expression
+			timePeriod: null
 		};
 	}
 	if (
 		row.occurred_precision === 'approximate' &&
+		row.occurred_at &&
 		row.occurred_on &&
 		row.timezone &&
-		row.time_expression
+		row.time_period === null
 	) {
 		return {
 			precision: 'approximate',
 			occurredAt: row.occurred_at,
 			occurredOn: row.occurred_on,
 			timezone: row.timezone,
-			timeExpression: row.time_expression
+			timePeriod: null
 		};
 	}
-	if (row.occurred_precision === 'date' && row.occurred_on && row.timezone) {
+	if (
+		row.occurred_precision === 'approximate' &&
+		row.occurred_at === null &&
+		row.occurred_on &&
+		row.timezone &&
+		isMealTimePeriod(row.time_period)
+	) {
+		return {
+			precision: 'approximate',
+			occurredAt: null,
+			occurredOn: row.occurred_on,
+			timezone: row.timezone,
+			timePeriod: row.time_period
+		};
+	}
+	if (
+		row.occurred_precision === 'date' &&
+		row.occurred_on &&
+		row.timezone &&
+		row.time_period === null
+	) {
 		return {
 			precision: 'date',
 			occurredAt: null,
 			occurredOn: row.occurred_on,
 			timezone: row.timezone,
-			timeExpression: row.time_expression
+			timePeriod: null
 		};
 	}
 	if (
@@ -205,14 +233,14 @@ function mapOccurrence(row: MealRow): MealOccurrence {
 		row.occurred_at === null &&
 		row.occurred_on === null &&
 		row.timezone === null &&
-		row.time_expression === null
+		row.time_period === null
 	) {
 		return {
 			precision: 'unknown',
 			occurredAt: null,
 			occurredOn: null,
 			timezone: null,
-			timeExpression: null
+			timePeriod: null
 		};
 	}
 	throw new Error(`Måltiden ${row.id} har en inkonsekvent tidsuppgift.`);
@@ -224,6 +252,6 @@ function occurrenceParameters(occurrence: MealOccurrenceInput) {
 		p_occurred_at: occurrence.occurredAt,
 		p_occurred_on: 'occurredOn' in occurrence ? occurrence.occurredOn : null,
 		p_timezone: occurrence.timezone,
-		p_time_expression: occurrence.timeExpression
+		p_time_period: occurrence.timePeriod
 	};
 }

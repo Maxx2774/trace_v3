@@ -88,6 +88,24 @@ export function getRecentConversationDateLabel(value: string, now = new Date()):
 	return `${date.getDate()} ${shortMonthLabels[date.getMonth()]}`;
 }
 
+export function getConversationStartDateLabel(value: string, now = new Date()): string {
+	const date = new Date(value);
+	const difference = getCalendarDay(now) - getCalendarDay(date);
+	const time = formatTime(date);
+
+	if (difference <= 0) return `Idag ${time}`;
+	if (difference === 1) return `Igår ${time}`;
+	if (difference <= 6) {
+		const weekday = new Intl.DateTimeFormat('sv-SE', { weekday: 'long' }).format(date);
+		return `${weekday.slice(0, 1).toUpperCase()}${weekday.slice(1)} ${time}`;
+	}
+
+	const year = date.getFullYear();
+	return `${date.getDate()} ${shortMonthLabels[date.getMonth()]}${
+		year === now.getFullYear() ? '' : ` ${year}`
+	} ${time}`;
+}
+
 function getCalendarDay(date: Date): number {
 	return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / millisecondsPerDay;
 }

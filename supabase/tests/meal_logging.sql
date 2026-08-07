@@ -67,7 +67,7 @@ begin
 		'2026-08-06T06:30:00Z',
 		null,
 		'Europe/Stockholm',
-		'klockan halv nio',
+		null,
 		'[
 			{"name":"Chiapudding","amountText":null,"ingredients":[]},
 			{"name":"Äggröra","amountText":null,"ingredients":[
@@ -105,7 +105,7 @@ begin
 		'2026-08-06T06:30:00Z',
 		null,
 		'Europe/Stockholm',
-		'klockan halv nio',
+		null,
 		'[
 			{"name":"Chiapudding","amountText":null,"ingredients":[]},
 			{"name":"Äggröra","amountText":null,"ingredients":[
@@ -170,7 +170,7 @@ begin
 		null,
 		'2026-08-06',
 		'Europe/Stockholm',
-		'vid lunch',
+		'lunch',
 		jsonb_build_array(
 			jsonb_build_object(
 				'id', v_item_id,
@@ -195,8 +195,8 @@ begin
 	v_new_item_id := (v_result #>> '{items,1,id}')::uuid;
 	assert (v_result ->> 'revision')::integer = 2, 'update must bump revision exactly once';
 	assert v_result ->> 'mealType' = 'lunch', 'update must replace meal type';
-	assert v_result #>> '{occurrence,timeExpression}' = 'vid lunch',
-		'approximate expression without a clock must be preserved';
+	assert v_result #>> '{occurrence,timePeriod}' = 'lunch',
+		'approximate periods without a clock must remain structured';
 	assert (v_result #>> '{items,0,id}')::uuid = v_item_id,
 		'existing item identity must be preserved';
 	assert (v_result #>> '{items,0,ingredients,0,id}')::uuid = v_ingredient_id,
@@ -217,7 +217,7 @@ begin
 		null,
 		'2026-08-06',
 		'Europe/Stockholm',
-		'vid lunch',
+		'lunch',
 		jsonb_build_array(
 			jsonb_build_object(
 				'id', v_item_id,

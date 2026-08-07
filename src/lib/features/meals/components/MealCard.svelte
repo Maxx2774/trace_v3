@@ -3,8 +3,8 @@
 	import EditIcon from '$lib/components/icons/EditIcon.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 	import {
+		MEAL_TIME_PERIOD_OPTIONS,
 		MEAL_TYPE_OPTIONS,
-		mealItemsForMutation,
 		mealTypeLabel,
 		type Meal,
 		type MealItemMutationInput,
@@ -12,31 +12,25 @@
 		type MealType
 	} from '../contracts';
 	import {
-		formatMealOccurrence,
-		localTimeInput,
-		occurrenceForMutation,
-		zonedDateTimeToIso
-	} from '../meal-time';
+		createMealOccurrenceDraft,
+		mealItemsForMutation,
+		mealOccurrenceFromDraft,
+		removeMealIngredient,
+		removeMealItem,
+		upsertMealIngredient,
+		upsertMealItem,
+		type MealIngredientDraft,
+		type MealItemDraft,
+		type MealOccurrenceDraft
+	} from '../meal-mutations';
+	import { formatMealOccurrence, occurrenceForMutation } from '../meal-time';
 	import { updateMeal } from '../meals.remote';
 
 	type Precision = Meal['occurrence']['precision'];
 	type Editor =
-		| { kind: 'item'; id: string | null; name: string; amountText: string }
-		| {
-				kind: 'ingredient';
-				itemId: string;
-				id: string | null;
-				name: string;
-				amountText: string;
-		  }
-		| {
-				kind: 'occurrence';
-				precision: Precision;
-				date: string;
-				time: string;
-				timezone: string;
-				timeExpression: string;
-		  };
+		| ({ kind: 'item' } & MealItemDraft)
+		| ({ kind: 'ingredient' } & MealIngredientDraft)
+		| ({ kind: 'occurrence' } & MealOccurrenceDraft);
 
 	const PRECISION_OPTIONS: ReadonlyArray<{ value: Precision; label: string }> = [
 		{ value: 'exact', label: 'Exakt tid' },
@@ -48,11 +42,13 @@
 	let {
 		meal,
 		editable = false,
-		onUpdated
+		onUpdated,
+		onReloadRequested
 	}: {
 		meal: Meal;
 		editable?: boolean;
 		onUpdated?: (meal: Meal) => void;
+		onReloadRequested?: () => void;
 	} = $props();
 
 	let editing = $state(false);
@@ -115,17 +111,7 @@
 	}
 
 	function editOccurrence() {
-		const occurrence = meal.occurrence;
-		const timezone =
-			occurrence.timezone ?? (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
-		editor = {
-			kind: 'occurrence',
-			precision: occurrence.precision,
-			date: occurrence.occurredOn ?? localDate(new Date(), timezone),
-			time: localTimeInput(occurrence.occurredAt, occurrence.timezone),
-			timezone,
-			timeExpression: occurrence.timeExpression ?? ''
-		};
+		editor = { kind: 'occurrence', ...createMealOccurrenceDraft(meal.occurrence) };
 		clearError();
 	}
 
@@ -137,53 +123,21 @@
 	async function saveItem(event: SubmitEvent) {
 		event.preventDefault();
 		if (!editor || editor.kind !== 'item') return;
-		const itemEditor = editor;
-		const name = itemEditor.name.trim();
-		if (!name) return showError('Namnet får inte vara tomt.');
-
-		const items = mealItemsForMutation(meal.items);
-		if (itemEditor.id) {
-			const next = items.map((item) =>
-				item.id === itemEditor.id
-					? { ...item, name, amountText: nullableText(itemEditor.amountText) }
-					: item
-			);
-			await commit({ items: next }, true);
-		} else {
-			await commit(
-				{
-					items: [
-						...items,
-						{ id: null, name, amountText: nullableText(itemEditor.amountText), ingredients: [] }
-					]
-				},
-				true
-			);
+		try {
+			await commit({ items: upsertMealItem(meal.items, editor) }, true);
+		} catch (cause) {
+			showError(cause instanceof Error ? cause.message : 'Måltidsdelen kunde inte ändras.');
 		}
 	}
 
 	async function saveIngredient(event: SubmitEvent) {
 		event.preventDefault();
 		if (!editor || editor.kind !== 'ingredient') return;
-		const ingredientEditor = editor;
-		const name = ingredientEditor.name.trim();
-		if (!name) return showError('Ingrediensens namn får inte vara tomt.');
-
-		const items = mealItemsForMutation(meal.items).map((item) => {
-			if (item.id !== ingredientEditor.itemId) return item;
-			const ingredients = ingredientEditor.id
-				? item.ingredients.map((ingredient) =>
-						ingredient.id === ingredientEditor.id
-							? { ...ingredient, name, amountText: nullableText(ingredientEditor.amountText) }
-							: ingredient
-					)
-				: [
-						...item.ingredients,
-						{ id: null, name, amountText: nullableText(ingredientEditor.amountText) }
-					];
-			return { ...item, ingredients };
-		});
-		await commit({ items }, true);
+		try {
+			await commit({ items: upsertMealIngredient(meal.items, editor) }, true);
+		} catch (cause) {
+			showError(cause instanceof Error ? cause.message : 'Ingrediensen kunde inte ändras.');
+		}
 	}
 
 	async function saveOccurrence(event: SubmitEvent) {
@@ -191,7 +145,7 @@
 		if (!editor || editor.kind !== 'occurrence') return;
 		let occurrence: MealOccurrenceInput;
 		try {
-			occurrence = occurrenceFromEditor(editor);
+			occurrence = mealOccurrenceFromDraft(editor);
 		} catch (cause) {
 			showError(cause instanceof Error ? cause.message : 'Datumet eller tiden är ogiltig.');
 			return;
@@ -201,19 +155,11 @@
 
 	async function removeItem(itemId: string) {
 		if (meal.items.length <= 1) return;
-		await commit({ items: mealItemsForMutation(meal.items).filter((item) => item.id !== itemId) });
+		await commit({ items: removeMealItem(meal.items, itemId) });
 	}
 
 	async function removeIngredient(itemId: string, ingredientId: string) {
-		const items = mealItemsForMutation(meal.items).map((item) =>
-			item.id === itemId
-				? {
-						...item,
-						ingredients: item.ingredients.filter((ingredient) => ingredient.id !== ingredientId)
-					}
-				: item
-		);
-		await commit({ items });
+		await commit({ items: removeMealIngredient(meal.items, itemId, ingredientId) });
 	}
 
 	async function commit(
@@ -257,7 +203,7 @@
 	}
 
 	function requestReload() {
-		window.dispatchEvent(new CustomEvent('tracemealreloadrequested'));
+		onReloadRequested?.();
 	}
 
 	function clearError() {
@@ -268,72 +214,6 @@
 	function showError(message: string) {
 		errorMessage = message;
 		revisionConflict = false;
-	}
-
-	function nullableText(value: string): string | null {
-		return value.trim() || null;
-	}
-
-	function occurrenceFromEditor(
-		value: Extract<Editor, { kind: 'occurrence' }>
-	): MealOccurrenceInput {
-		if (value.precision === 'unknown') {
-			return {
-				precision: 'unknown',
-				occurredAt: null,
-				occurredOn: null,
-				timezone: null,
-				timeExpression: null
-			};
-		}
-		if (!value.date) throw new Error('Ange ett datum.');
-		if (value.precision === 'date') {
-			return {
-				precision: 'date',
-				occurredAt: null,
-				occurredOn: value.date,
-				timezone: value.timezone,
-				timeExpression: nullableText(value.timeExpression)
-			};
-		}
-		if (value.precision === 'exact') {
-			if (!value.time) throw new Error('Ange en exakt tid.');
-			return {
-				precision: 'exact',
-				occurredAt: zonedDateTimeToIso(value.date, value.time, value.timezone),
-				timezone: value.timezone,
-				timeExpression: nullableText(value.timeExpression)
-			};
-		}
-
-		const expression = nullableText(value.timeExpression);
-		if (!expression) throw new Error('Ange det ungefärliga tidsuttrycket.');
-		return value.time
-			? {
-					precision: 'approximate',
-					occurredAt: zonedDateTimeToIso(value.date, value.time, value.timezone),
-					timezone: value.timezone,
-					timeExpression: expression
-				}
-			: {
-					precision: 'approximate',
-					occurredAt: null,
-					occurredOn: value.date,
-					timezone: value.timezone,
-					timeExpression: expression
-				};
-	}
-
-	function localDate(value: Date, timezone: string): string {
-		const parts = new Intl.DateTimeFormat('sv-SE', {
-			timeZone: timezone,
-			year: 'numeric',
-			month: '2-digit',
-			day: '2-digit'
-		}).formatToParts(value);
-		const part = (type: Intl.DateTimeFormatPartTypes) =>
-			parts.find((candidate) => candidate.type === type)?.value ?? '';
-		return `${part('year')}-${part('month')}-${part('day')}`;
 	}
 
 	function isRevisionConflict(cause: unknown): boolean {
@@ -373,7 +253,10 @@
 				label="Tidsprecision"
 				disabled={saving}
 				onValueChange={(precision) => {
-					if (editor?.kind === 'occurrence') editor.precision = precision;
+					if (editor?.kind !== 'occurrence') return;
+					editor.precision = precision;
+					if (precision !== 'approximate') editor.timePeriod = null;
+					if (precision === 'date' || precision === 'unknown') editor.time = '';
 				}}
 			/>
 			{#if editor.precision !== 'unknown'}
@@ -390,22 +273,28 @@
 						bind:value={editor.time}
 						disabled={saving}
 						required={editor.precision === 'exact'}
+						oninput={() => {
+							if (editor?.kind === 'occurrence' && editor.time) editor.timePeriod = null;
+						}}
 					/>
 				</label>
 			{/if}
-			{#if editor.precision !== 'unknown'}
-				<label>
-					<span>
-						{editor.precision === 'approximate' ? 'Tidsuttryck' : 'Sparat tidsuttryck (valfritt)'}
-					</span>
-					<input
-						type="text"
-						bind:value={editor.timeExpression}
-						maxlength="160"
+			{#if editor.precision === 'approximate'}
+				<div class="time-period-field">
+					<span>Tidsperiod om klockslag saknas</span>
+					<Select
+						value={editor.timePeriod}
+						options={MEAL_TIME_PERIOD_OPTIONS}
+						placeholder="Välj tidsperiod"
+						label="Tidsperiod"
 						disabled={saving}
-						required={editor.precision === 'approximate'}
+						onValueChange={(timePeriod) => {
+							if (editor?.kind !== 'occurrence') return;
+							editor.timePeriod = timePeriod;
+							editor.time = '';
+						}}
 					/>
-				</label>
+				</div>
 			{/if}
 			<div class="form-actions">
 				<button class="save" type="submit" disabled={saving}>Spara</button>
@@ -744,6 +633,7 @@
 	}
 
 	.occurrence-editor label,
+	.time-period-field,
 	.inline-editor label {
 		display: grid;
 		gap: 0.2rem;

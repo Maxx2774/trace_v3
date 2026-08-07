@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	getConversationDatePresentation,
+	getConversationStartDateLabel,
 	getRecentConversationDateLabel
 } from '$lib/features/chat/conversation-date';
 
@@ -31,5 +32,17 @@ describe('getRecentConversationDateLabel', () => {
 		['2025-12-24T10:00:00', '24 dec']
 	])('formats %s as %s', (value, expected) => {
 		expect(getRecentConversationDateLabel(value, now)).toBe(expected);
+	});
+});
+
+describe('getConversationStartDateLabel', () => {
+	it.each([
+		['2026-08-06T09:40:00', 'Idag 09:40'],
+		['2026-08-05T10:00:00', 'Igår 10:00'],
+		['2026-08-03T19:20:00', 'Måndag 19:20'],
+		['2026-07-24T10:00:00', '24 jul 10:00'],
+		['2025-12-24T10:00:00', '24 dec 2025 10:00']
+	])('formats %s as %s', (value, expected) => {
+		expect(getConversationStartDateLabel(value, now)).toBe(expected);
 	});
 });

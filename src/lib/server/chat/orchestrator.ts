@@ -31,20 +31,29 @@ export type TurnOutcome = {
 };
 
 type ProcessingBeginResult = Extract<BeginChatTurnResult, { status: 'created' | 'resumed' }>;
+type AfterComplete = (
+	result: CommitChatTurnResult,
+	begin: ProcessingBeginResult
+) => Promise<ConversationSummary>;
+type CompletionContext = {
+	client: SupabaseClient;
+	userId: string;
+	turnId: string;
+	emit: (event: ChatStreamEvent) => void;
+	afterComplete?: AfterComplete;
+};
 
 export async function orchestrateChatTurn(
 	input: {
 		client: SupabaseClient;
 		userId: string;
 		turnId: string;
+		timezone: string;
 		modelInput: OpenAI.Responses.ResponseInput;
 		beginPromise: Promise<BeginChatTurnResult>;
 		signal: AbortSignal;
 		emit: (event: ChatStreamEvent) => void;
-		afterComplete?: (
-			result: CommitChatTurnResult,
-			begin: ProcessingBeginResult
-		) => Promise<ConversationSummary>;
+		afterComplete?: AfterComplete;
 	},
 	dependencies: {
 		runModelStep: typeof runModelStep;
@@ -120,21 +129,7 @@ export async function orchestrateChatTurn(
 					input.emit({ type: 'replace', turnId: input.turnId, text: canonicalText });
 				}
 
-				const committed = await dependencies.completeChatTurn(input.client, {
-					userId: input.userId,
-					turnId: input.turnId,
-					leaseExpiresAt: begin.leaseExpiresAt,
-					content: canonicalText
-				});
-				const conversation = input.afterComplete
-					? await input.afterComplete(committed, begin)
-					: committed.conversation;
-				input.emit({
-					type: 'done',
-					turnId: input.turnId,
-					message: committed.message,
-					conversation
-				});
+				await completeAndEmit(input, begin, canonicalText, dependencies.completeChatTurn);
 				return { status: outcomeStatus(records, errors), records, errors };
 			}
 
@@ -156,7 +151,8 @@ export async function orchestrateChatTurn(
 				input.client,
 				input.userId,
 				input.turnId,
-				begin.leaseExpiresAt
+				begin.leaseExpiresAt,
+				input.timezone
 			);
 			const functionOutputs: OpenAI.Responses.ResponseInputItem.FunctionCallOutput[] = [];
 			let terminalExecutionError = false;
@@ -219,21 +215,12 @@ export async function orchestrateChatTurn(
 				errors.length === 0 &&
 				!continueModel
 			) {
-				const committed = await dependencies.completeChatTurn(input.client, {
-					userId: input.userId,
-					turnId: input.turnId,
-					leaseExpiresAt: begin.leaseExpiresAt,
-					content: REGISTRATION_CONFIRMATION
-				});
-				const conversation = input.afterComplete
-					? await input.afterComplete(committed, begin)
-					: committed.conversation;
-				input.emit({
-					type: 'done',
-					turnId: input.turnId,
-					message: committed.message,
-					conversation
-				});
+				await completeAndEmit(
+					input,
+					begin,
+					REGISTRATION_CONFIRMATION,
+					dependencies.completeChatTurn
+				);
 				return { status: 'succeeded', records, errors };
 			}
 
@@ -314,6 +301,29 @@ class TurnTerminalError extends Error {
 	}
 }
 
+async function completeAndEmit(
+	input: CompletionContext,
+	begin: ProcessingBeginResult,
+	content: string,
+	complete: typeof completeChatTurn
+): Promise<void> {
+	const committed = await complete(input.client, {
+		userId: input.userId,
+		turnId: input.turnId,
+		leaseExpiresAt: begin.leaseExpiresAt,
+		content
+	});
+	const conversation = input.afterComplete
+		? await input.afterComplete(committed, begin)
+		: committed.conversation;
+	input.emit({
+		type: 'done',
+		turnId: input.turnId,
+		message: committed.message,
+		conversation
+	});
+}
+
 async function runStep(
 	input: OpenAI.Responses.ResponseInput,
 	userId: string,
@@ -345,7 +355,8 @@ async function executePreparedCalls(
 	client: SupabaseClient,
 	userId: string,
 	turnId: string,
-	leaseExpiresAt: string
+	leaseExpiresAt: string,
+	timezone: string
 ) {
 	const calls = preparations
 		.filter((result): result is Extract<ToolCallPreparation, { ok: true }> => result.ok)
@@ -366,7 +377,8 @@ async function executePreparedCalls(
 						userId,
 						turnId,
 						leaseExpiresAt,
-						operationIndex: call.operationIndex
+						operationIndex: call.operationIndex,
+						timezone
 					},
 					call.args as never
 				)

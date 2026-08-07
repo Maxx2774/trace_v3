@@ -29,7 +29,9 @@ describe('buildModelContext', () => {
 			'Första svaret',
 			'Andra frågan',
 			'Andra svaret',
-			expect.stringContaining('Aktuell servertid'),
+			expect.stringContaining(
+				'Aktuellt lokalt datum: 2026-08-06\nAktuell lokal tid: 14:00\nVerifierad tidszon: Europe/Stockholm'
+			),
 			'Aktuellt meddelande'
 		]);
 	});

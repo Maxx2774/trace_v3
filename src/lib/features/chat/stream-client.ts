@@ -1,4 +1,5 @@
 import type { ChatHttpError, ChatStreamEvent, ChatStreamRequest } from './contracts';
+import { isMealTimePeriod, isMealType } from '$lib/features/meals/contracts';
 
 export class ChatRequestError extends Error {
 	constructor(
@@ -101,13 +102,47 @@ function isJournalRecord(value: unknown): boolean {
 	return (
 		typeof value.value.id === 'string' &&
 		typeof value.value.revision === 'number' &&
-		(value.value.mealType === null || typeof value.value.mealType === 'string') &&
+		(value.value.mealType === null || isMealType(value.value.mealType)) &&
 		Array.isArray(value.value.items) &&
 		value.value.items.every(isMealItem) &&
-		isObject(value.value.occurrence) &&
-		typeof value.value.occurrence.precision === 'string' &&
+		isMealOccurrence(value.value.occurrence) &&
 		typeof value.value.createdAt === 'string' &&
 		typeof value.value.updatedAt === 'string'
+	);
+}
+
+function isMealOccurrence(value: unknown): boolean {
+	if (!isObject(value) || typeof value.precision !== 'string') return false;
+	if (value.precision === 'exact') {
+		return (
+			typeof value.occurredAt === 'string' &&
+			typeof value.occurredOn === 'string' &&
+			typeof value.timezone === 'string' &&
+			value.timePeriod === null
+		);
+	}
+	if (value.precision === 'approximate') {
+		return (
+			typeof value.occurredOn === 'string' &&
+			typeof value.timezone === 'string' &&
+			((typeof value.occurredAt === 'string' && value.timePeriod === null) ||
+				(value.occurredAt === null && isMealTimePeriod(value.timePeriod)))
+		);
+	}
+	if (value.precision === 'date') {
+		return (
+			value.occurredAt === null &&
+			typeof value.occurredOn === 'string' &&
+			typeof value.timezone === 'string' &&
+			value.timePeriod === null
+		);
+	}
+	return (
+		value.precision === 'unknown' &&
+		value.occurredAt === null &&
+		value.occurredOn === null &&
+		value.timezone === null &&
+		value.timePeriod === null
 	);
 }
 

@@ -15,6 +15,7 @@ import {
 } from './contracts';
 import type { TurnJournalRecord } from '$lib/features/journal/contracts';
 import type { Meal } from '$lib/features/meals/contracts';
+import { getRuntimeTimezone } from '$lib/date-time';
 import { streamChat } from './stream-client';
 
 export type DisplayMessage = ChatMessage & { pending?: boolean };
@@ -372,7 +373,7 @@ class ChatSession {
 					conversationId,
 					turnId: stream.turnId,
 					message,
-					timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+					timezone: getRuntimeTimezone()
 				},
 				signal: stream.controller.signal,
 				onEvent: (event) => this.handleStreamEvent(event, stream)

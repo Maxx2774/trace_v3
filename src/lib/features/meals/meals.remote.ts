@@ -1,4 +1,14 @@
 import { command, getRequestEvent } from '$app/server';
+import { isValidTimezone } from '$lib/date-time';
+import { MEAL_LIMITS } from '$lib/features/meals/contracts';
+import {
+	hasAllowedIngredientCount,
+	hasAllowedMealPayloadSize,
+	mealNameSchema,
+	mealTimePeriodSchema,
+	mealTypeSchema,
+	nullableMealAmountSchema
+} from '$lib/features/meals/validation';
 import { requireAuthenticatedUserId } from '$lib/server/auth';
 import {
 	MealMutationConflictError,
@@ -10,11 +20,13 @@ import { getAdminSupabaseClient } from '$lib/server/supabase/admin';
 import { error } from '@sveltejs/kit';
 import * as v from 'valibot';
 
-const text = (maxLength: number) =>
-	v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(maxLength));
-const nullableAmount = v.nullable(text(80));
-const nullableExpression = v.nullable(text(160));
-const timezone = v.pipe(text(255), v.check(validTimezone, 'Ogiltig tidszon.'));
+const timezone = v.pipe(
+	v.string(),
+	v.trim(),
+	v.minLength(1),
+	v.maxLength(255),
+	v.check(isValidTimezone, 'Ogiltig tidszon.')
+);
 const uuid = v.pipe(v.string(), v.uuid());
 const nullableUuid = v.nullable(uuid);
 
@@ -23,62 +35,62 @@ const occurrenceSchema = v.union([
 		precision: v.literal('exact'),
 		occurredAt: v.pipe(v.string(), v.isoTimestamp()),
 		timezone,
-		timeExpression: nullableExpression
+		timePeriod: v.null()
 	}),
 	v.strictObject({
 		precision: v.literal('approximate'),
 		occurredAt: v.pipe(v.string(), v.isoTimestamp()),
 		timezone,
-		timeExpression: text(160)
+		timePeriod: v.null()
 	}),
 	v.strictObject({
 		precision: v.literal('approximate'),
 		occurredAt: v.null(),
 		occurredOn: v.pipe(v.string(), v.isoDate()),
 		timezone,
-		timeExpression: text(160)
+		timePeriod: mealTimePeriodSchema
 	}),
 	v.strictObject({
 		precision: v.literal('date'),
 		occurredAt: v.null(),
 		occurredOn: v.pipe(v.string(), v.isoDate()),
 		timezone,
-		timeExpression: nullableExpression
+		timePeriod: v.null()
 	}),
 	v.strictObject({
 		precision: v.literal('unknown'),
 		occurredAt: v.null(),
 		occurredOn: v.null(),
 		timezone: v.null(),
-		timeExpression: v.null()
+		timePeriod: v.null()
 	})
 ]);
 
 const ingredientSchema = v.strictObject({
 	id: nullableUuid,
-	name: text(160),
-	amountText: nullableAmount
+	name: mealNameSchema,
+	amountText: nullableMealAmountSchema
 });
 const itemSchema = v.strictObject({
 	id: nullableUuid,
-	name: text(160),
-	amountText: nullableAmount,
-	ingredients: v.pipe(v.array(ingredientSchema), v.maxLength(30))
+	name: mealNameSchema,
+	amountText: nullableMealAmountSchema,
+	ingredients: v.pipe(v.array(ingredientSchema), v.maxLength(MEAL_LIMITS.maxIngredientsPerItem))
 });
 const updateMealInput = v.pipe(
 	v.strictObject({
 		id: uuid,
 		expectedRevision: v.pipe(v.number(), v.integer(), v.minValue(1)),
 		clientMutationId: uuid,
-		mealType: v.nullable(v.picklist(['breakfast', 'lunch', 'dinner', 'snack', 'other'])),
+		mealType: mealTypeSchema,
 		occurrence: occurrenceSchema,
-		items: v.pipe(v.array(itemSchema), v.minLength(1), v.maxLength(20))
+		items: v.pipe(v.array(itemSchema), v.minLength(1), v.maxLength(MEAL_LIMITS.maxItems))
 	}),
 	v.check(
-		(input) => input.items.reduce((total, item) => total + item.ingredients.length, 0) <= 100,
+		(input) => hasAllowedIngredientCount(input.items),
 		'Måltiden innehåller för många ingredienser.'
 	),
-	v.check((input) => serializedSize(input) <= 32 * 1024, 'Måltidsändringen är för stor.')
+	v.check((input) => hasAllowedMealPayloadSize(input), 'Måltidsändringen är för stor.')
 );
 
 export const updateMeal = command(updateMealInput, async (input) => {
@@ -94,16 +106,3 @@ export const updateMeal = command(updateMealInput, async (input) => {
 		throw cause;
 	}
 });
-
-function serializedSize(value: unknown): number {
-	return new TextEncoder().encode(JSON.stringify(value)).byteLength;
-}
-
-function validTimezone(value: string): boolean {
-	try {
-		new Intl.DateTimeFormat('sv-SE', { timeZone: value }).format();
-		return true;
-	} catch {
-		return false;
-	}
-}

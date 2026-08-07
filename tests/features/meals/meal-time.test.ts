@@ -1,9 +1,8 @@
 import {
 	formatMealOccurrence,
 	formatRelativeMealDate,
-	localTimeInput,
-	occurrenceForMutation,
-	zonedDateTimeToIso
+	occurrenceFromExtraction,
+	occurrenceForMutation
 } from '$lib/features/meals/meal-time';
 import type { MealOccurrence } from '$lib/features/meals/contracts';
 import { describe, expect, it } from 'vitest';
@@ -29,7 +28,7 @@ describe('meal occurrence formatting', () => {
 		expect(formatMealOccurrence(occurrence('unknown'), now)).toBe('Datum ej angivet');
 	});
 
-	it('shows a saved approximate expression when no clock time was inferred', () => {
+	it('shows a controlled period when no clock time was inferred', () => {
 		expect(
 			formatMealOccurrence(
 				{
@@ -37,27 +36,59 @@ describe('meal occurrence formatting', () => {
 					occurredAt: null,
 					occurredOn: '2026-08-06',
 					timezone: 'Europe/Stockholm',
-					timeExpression: 'vid lunch'
+					timePeriod: 'lunch'
 				},
 				now
 			)
 		).toBe('Idag, vid lunch');
 	});
+
+	it('never renders a date-only occurrence twice', () => {
+		expect(
+			formatMealOccurrence(
+				{
+					precision: 'date',
+					occurredAt: null,
+					occurredOn: '2026-08-05',
+					timezone: 'Europe/Stockholm',
+					timePeriod: null
+				},
+				now
+			)
+		).toBe('Igår');
+	});
 });
 
 describe('meal occurrence editing', () => {
-	it('converts local Stockholm time without losing its wall-clock value', () => {
-		const iso = zonedDateTimeToIso('2026-08-06', '08:30', 'Europe/Stockholm');
-		expect(iso).toBe('2026-08-06T06:30:00.000Z');
-		expect(localTimeInput(iso, 'Europe/Stockholm')).toBe('08:30');
-	});
-
 	it('keeps the full precision contract when preparing a mutation', () => {
 		expect(occurrenceForMutation(occurrence('exact'))).toEqual({
 			precision: 'exact',
 			occurredAt: '2026-08-06T06:30:00.000Z',
 			timezone: 'Europe/Stockholm',
-			timeExpression: null
+			timePeriod: null
+		});
+	});
+
+	it('lets the server derive canonical precision and UTC time from model extraction', () => {
+		expect(
+			occurrenceFromExtraction(
+				{ date: '2026-08-06', time: { kind: 'approximate', localTime: '08:30' } },
+				'Europe/Stockholm'
+			)
+		).toEqual({
+			precision: 'approximate',
+			occurredAt: '2026-08-06T06:30:00.000Z',
+			timezone: 'Europe/Stockholm',
+			timePeriod: null
+		});
+		expect(
+			occurrenceFromExtraction({ date: '2026-08-05', time: null }, 'Europe/Stockholm')
+		).toEqual({
+			precision: 'date',
+			occurredAt: null,
+			occurredOn: '2026-08-05',
+			timezone: 'Europe/Stockholm',
+			timePeriod: null
 		});
 	});
 });
@@ -69,7 +100,7 @@ function occurrence(precision: MealOccurrence['precision']): MealOccurrence {
 			occurredAt: '2026-08-06T06:30:00.000Z',
 			occurredOn: '2026-08-06',
 			timezone: 'Europe/Stockholm',
-			timeExpression: null
+			timePeriod: null
 		};
 	}
 	if (precision === 'approximate') {
@@ -78,7 +109,7 @@ function occurrence(precision: MealOccurrence['precision']): MealOccurrence {
 			occurredAt: '2026-08-06T06:30:00.000Z',
 			occurredOn: '2026-08-06',
 			timezone: 'Europe/Stockholm',
-			timeExpression: 'ungefär halv nio'
+			timePeriod: null
 		};
 	}
 	if (precision === 'date') {
@@ -87,7 +118,7 @@ function occurrence(precision: MealOccurrence['precision']): MealOccurrence {
 			occurredAt: null,
 			occurredOn: '2026-08-06',
 			timezone: 'Europe/Stockholm',
-			timeExpression: null
+			timePeriod: null
 		};
 	}
 	return {
@@ -95,6 +126,6 @@ function occurrence(precision: MealOccurrence['precision']): MealOccurrence {
 		occurredAt: null,
 		occurredOn: null,
 		timezone: null,
-		timeExpression: null
+		timePeriod: null
 	};
 }

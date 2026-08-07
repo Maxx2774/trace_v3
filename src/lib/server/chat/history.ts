@@ -4,6 +4,7 @@ import {
 	CHAT_HISTORY_MAX_MESSAGES,
 	CHAT_HISTORY_MAX_TURNS
 } from '$lib/features/chat/contracts';
+import { getLocalDateTime } from '$lib/date-time';
 import type { TurnJournalRecord } from '$lib/features/journal/contracts';
 import { listConversationJournalRecords } from '$lib/server/meals/meals';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -98,7 +99,8 @@ export function buildModelContext(input: {
 	timezone: string;
 	now: Date;
 }): ModelContext {
-	const dynamicContext = `Aktuell servertid: ${input.now.toISOString()}\nVerifierad tidszon: ${input.timezone}`;
+	const localNow = getLocalDateTime(input.now, input.timezone);
+	const dynamicContext = `Aktuellt lokalt datum: ${localNow.date}\nAktuell lokal tid: ${localNow.time}\nVerifierad tidszon: ${input.timezone}`;
 	const turns = groupCompleteTurns(input.history);
 	const recordCharactersByTurn = new Map<string, number>();
 	for (const entry of input.journalRecords) {

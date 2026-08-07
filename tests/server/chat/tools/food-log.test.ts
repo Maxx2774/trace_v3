@@ -16,10 +16,8 @@ const base = {
 		}
 	],
 	occurred: {
-		precision: 'exact' as const,
-		occurredAt: '2026-08-06T06:30:00.000Z',
-		timezone: 'Europe/Stockholm',
-		timeExpression: 'klockan halv nio'
+		date: '2026-08-06',
+		time: { kind: 'exact' as const, localTime: '08:30' }
 	}
 };
 
@@ -37,43 +35,42 @@ describe('food_log.record', () => {
 		expect(safeParse(foodLogRecordSchema, base).success).toBe(true);
 	});
 
-	it('accepts an approximate expression without inventing a clock time', () => {
+	it('accepts a controlled period without inventing a clock time', () => {
 		expect(
 			safeParse(foodLogRecordSchema, {
 				...base,
 				occurred: {
-					precision: 'approximate',
-					occurredAt: null,
-					occurredOn: '2026-08-06',
-					timezone: 'Europe/Stockholm',
-					timeExpression: 'vid lunch'
+					date: '2026-08-06',
+					time: { kind: 'period', value: 'lunch' }
 				}
+			}).success
+		).toBe(true);
+	});
+
+	it('represents yesterday as a date without duplicating it as a time expression', () => {
+		expect(
+			safeParse(foodLogRecordSchema, {
+				...base,
+				occurred: { date: '2026-08-05', time: null }
 			}).success
 		).toBe(true);
 	});
 
 	it.each([
 		{
-			precision: 'unknown',
-			occurredAt: '2026-08-06T06:30:00.000Z',
-			occurredOn: null,
-			timezone: null,
-			timeExpression: null
+			date: null,
+			time: { kind: 'exact', localTime: '08:30' }
 		},
 		{
-			precision: 'date',
-			occurredAt: '2026-08-06T06:30:00.000Z',
-			occurredOn: '2026-08-06',
-			timezone: 'Europe/Stockholm',
-			timeExpression: 'i dag'
+			date: '2026-08-06',
+			time: { kind: 'approximate', localTime: 'halv nio' }
 		},
 		{
-			precision: 'exact',
-			occurredAt: null,
-			timezone: 'Europe/Stockholm',
-			timeExpression: null
+			date: '2026-08-06',
+			time: null,
+			timezone: 'Europe/Stockholm'
 		}
-	])('rejects inconsistent $precision occurrence data', (occurred) => {
+	])('rejects inconsistent or model-generated server fields', (occurred) => {
 		expect(safeParse(foodLogRecordSchema, { ...base, occurred }).success).toBe(false);
 	});
 

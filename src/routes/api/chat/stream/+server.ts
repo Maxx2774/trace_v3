@@ -3,6 +3,7 @@ import {
 	type ChatHttpError,
 	type ChatStreamRequest
 } from '$lib/features/chat/contracts';
+import { isValidTimezone } from '$lib/date-time';
 import {
 	ModelContextConversationNotFoundError,
 	prepareModelContext
@@ -64,6 +65,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			modelInput: modelContext.messages,
 			userId,
 			turnId: parsed.input.turnId,
+			timezone: parsed.input.timezone,
 			requestSignal: request.signal,
 			requestId,
 			isNewConversation: parsed.input.conversationId === null,
@@ -105,7 +107,9 @@ async function parseRequest(
 		!message ||
 		message.length > CHAT_MESSAGE_MAX_LENGTH ||
 		!UUID_PATTERN.test(turnId) ||
-		!validTimezone(timezone)
+		!timezone ||
+		timezone.length > 255 ||
+		!isValidTimezone(timezone)
 	) {
 		return { response: apiError(400, 'invalid_input', 'Meddelandet är ogiltigt.') };
 	}
@@ -124,16 +128,6 @@ async function parseRequest(
 			timezone
 		}
 	};
-}
-
-function validTimezone(timezone: string): boolean {
-	if (!timezone || timezone.length > 255) return false;
-	try {
-		new Intl.DateTimeFormat('sv-SE', { timeZone: timezone }).format();
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 function apiError(status: number, code: string, message: string): Response {

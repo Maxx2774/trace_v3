@@ -42,9 +42,10 @@ funktionalitet hör hemma i `product.md`.
 - Planerade, hypotetiska och andra personers måltider ska inte registreras. Modellen får
   inte lägga till ingredienser som användaren inte har nämnt eller bekräftat. Ett item utan
   sparade ingredienser visas utan antagna receptbeståndsdelar.
-- Måltidens tidsuppgift bevarar skillnaden mellan exakt tid, ungefärlig tid, endast lokalt
-  datum och helt okänd tid. Relativa tidsuttryck tolkas mot serverns tid och webbläsarens
-  validerade IANA-tidszon.
+- Måltidens tidsuppgift bevarar skillnaden mellan exakt klockslag, ungefärligt klockslag,
+  kontrollerad tidsperiod, endast lokalt datum och helt okänd tid. Modellen lämnar bara
+  tolkat lokalt datum och strukturerad tid; servern tillför den verifierade IANA-tidszonen
+  och härleder UTC-tid och precision. Fri modellgenererad tidstext sparas eller visas inte.
 - Kortet visar Idag, Igår eller veckodag för närliggande historiska datum och annars ett
   kort absolut datum. Framtida datum presenteras aldrig som exempelvis Imorgon.
 - En ren, lyckad måltidsregistrering visas direkt efter användarmeddelandet som
@@ -77,6 +78,9 @@ funktionalitet hör hemma i `product.md`.
 - När en konversation väljs visas konversationsvyn omedelbart med en tom meddelandeyta.
   De senaste 20 hela chattvändorna, normalt upp till 40 meddelanden, tonas in när ett
   sammanslaget serveranrop har hämtat både meddelanden och tillhörande måltidskort.
+- Konversationens startmarkör visar Idag, Igår eller en närliggande veckodag tillsammans
+  med tiden och använder annars ett kort absolut datum, i stället för att märka äldre
+  konversationer som dagens.
 - När användaren närmar sig början av den laddade historiken hämtas 15 äldre hela vändor,
   normalt upp till 30 meddelanden, med cursor-paginering. Äldre innehåll läggs ovanför utan
   att flytta den synliga scrollpositionen, och sena svar från äldre val ignoreras.

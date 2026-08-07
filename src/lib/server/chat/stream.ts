@@ -15,6 +15,7 @@ export function createChatResponseStream(
 		modelInput: OpenAI.Responses.ResponseInput;
 		userId: string;
 		turnId: string;
+		timezone: string;
 		requestSignal: AbortSignal;
 		requestId: string;
 		isNewConversation: boolean;
@@ -52,6 +53,7 @@ export function createChatResponseStream(
 					client: input.adminClient,
 					userId: input.userId,
 					turnId: input.turnId,
+					timezone: input.timezone,
 					modelInput: input.modelInput,
 					beginPromise: input.beginPromise,
 					signal: controller.signal,

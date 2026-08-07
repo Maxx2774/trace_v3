@@ -16,6 +16,7 @@ export type ToolExecutionContext = {
 	turnId: string;
 	leaseExpiresAt: string;
 	operationIndex: number;
+	timezone: string;
 };
 
 export type CanonicalToolResult = {

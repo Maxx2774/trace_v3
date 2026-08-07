@@ -57,6 +57,7 @@ describe('createChatResponseStream', () => {
 				modelInput: [{ role: 'user', content: userMessage.content }],
 				userId: '40000000-0000-4000-8000-000000000000',
 				turnId: userMessage.turnId,
+				timezone: 'Europe/Stockholm',
 				requestSignal: new AbortController().signal,
 				requestId: 'request-test',
 				isNewConversation: false,

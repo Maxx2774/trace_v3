@@ -1,6 +1,17 @@
-import type { MealOccurrence, MealOccurrenceInput } from './contracts';
-
-const DAY_MS = 86_400_000;
+import {
+	MEAL_TIME_PERIOD_OPTIONS,
+	type MealOccurrence,
+	type MealOccurrenceExtraction,
+	type MealOccurrenceInput,
+	type MealTimePeriod
+} from './contracts';
+import {
+	differenceInCalendarDays,
+	formatCalendarDate,
+	getLocalDate,
+	getLocalTime,
+	zonedDateTimeToIso
+} from '$lib/date-time';
 
 export function formatMealOccurrence(occurrence: MealOccurrence, now = new Date()): string {
 	if (occurrence.precision === 'unknown') return 'Datum ej angivet';
@@ -9,10 +20,11 @@ export function formatMealOccurrence(occurrence: MealOccurrence, now = new Date(
 	if (occurrence.precision === 'date') return date;
 
 	if (occurrence.precision === 'approximate' && !occurrence.occurredAt) {
-		return `${date}, ${occurrence.timeExpression}`;
+		if (occurrence.timePeriod === null) throw new Error('Måltiden saknar en tidsperiod.');
+		return `${date}, ${mealTimePeriodLabel(occurrence.timePeriod).toLocaleLowerCase('sv-SE')}`;
 	}
 
-	const time = formatTime(occurrence.occurredAt!, occurrence.timezone);
+	const time = getLocalTime(new Date(occurrence.occurredAt!), occurrence.timezone);
 	return occurrence.precision === 'approximate' ? `${date}, cirka ${time}` : `${date}, ${time}`;
 }
 
@@ -21,24 +33,17 @@ export function formatRelativeMealDate(
 	timezone: string,
 	now = new Date()
 ): string {
-	const today = dateInTimezone(now, timezone);
-	const difference = dateOrdinal(today) - dateOrdinal(localDate);
+	const today = getLocalDate(now, timezone);
+	const difference = differenceInCalendarDays(today, localDate);
 
 	if (difference === 0) return 'Idag';
 	if (difference === 1) return 'Igår';
 	if (difference >= 2 && difference <= 6) {
-		const weekday = new Intl.DateTimeFormat('sv-SE', {
-			weekday: 'long',
-			timeZone: 'UTC'
-		}).format(dateAtNoonUtc(localDate));
+		const weekday = formatCalendarDate(localDate, { weekday: 'long' });
 		return `${weekday.slice(0, 1).toUpperCase()}${weekday.slice(1)}`;
 	}
 
-	return new Intl.DateTimeFormat('sv-SE', {
-		day: 'numeric',
-		month: 'short',
-		timeZone: 'UTC'
-	}).format(dateAtNoonUtc(localDate));
+	return formatCalendarDate(localDate, { day: 'numeric', month: 'short' });
 }
 
 export function occurrenceForMutation(occurrence: MealOccurrence): MealOccurrenceInput {
@@ -47,7 +52,7 @@ export function occurrenceForMutation(occurrence: MealOccurrence): MealOccurrenc
 			precision: 'exact',
 			occurredAt: occurrence.occurredAt,
 			timezone: occurrence.timezone,
-			timeExpression: occurrence.timeExpression
+			timePeriod: null
 		};
 	}
 	if (occurrence.precision === 'approximate' && occurrence.occurredAt) {
@@ -55,89 +60,65 @@ export function occurrenceForMutation(occurrence: MealOccurrence): MealOccurrenc
 			precision: 'approximate',
 			occurredAt: occurrence.occurredAt,
 			timezone: occurrence.timezone,
-			timeExpression: occurrence.timeExpression
+			timePeriod: null
 		};
 	}
 	if (occurrence.precision === 'approximate') {
+		if (occurrence.timePeriod === null) throw new Error('Måltiden saknar en tidsperiod.');
 		return {
 			precision: 'approximate',
 			occurredAt: null,
 			occurredOn: occurrence.occurredOn,
 			timezone: occurrence.timezone,
-			timeExpression: occurrence.timeExpression
+			timePeriod: occurrence.timePeriod
 		};
 	}
 	return occurrence;
 }
 
-export function localTimeInput(isoTimestamp: string | null, timezone: string | null): string {
-	if (!isoTimestamp || !timezone) return '';
-	return formatParts(new Date(isoTimestamp), timezone).time;
-}
-
-export function zonedDateTimeToIso(localDate: string, localTime: string, timezone: string): string {
-	const [year, month, day] = localDate.split('-').map(Number);
-	const [hour, minute] = localTime.split(':').map(Number);
-	if (!year || !month || !day || !Number.isInteger(hour) || !Number.isInteger(minute)) {
-		throw new Error('Datum eller tid är ogiltig.');
+export function occurrenceFromExtraction(
+	extraction: MealOccurrenceExtraction,
+	timezone: string
+): MealOccurrenceInput {
+	if (extraction.date === null) {
+		if (extraction.time !== null) throw new Error('En tid kräver ett känt datum.');
+		return {
+			precision: 'unknown',
+			occurredAt: null,
+			occurredOn: null,
+			timezone: null,
+			timePeriod: null
+		};
 	}
 
-	const desired = Date.UTC(year, month - 1, day, hour, minute);
-	let candidate = desired;
-	for (let attempt = 0; attempt < 4; attempt += 1) {
-		const parts = formatParts(new Date(candidate), timezone);
-		const represented = Date.UTC(
-			Number(parts.date.slice(0, 4)),
-			Number(parts.date.slice(5, 7)) - 1,
-			Number(parts.date.slice(8, 10)),
-			Number(parts.time.slice(0, 2)),
-			Number(parts.time.slice(3, 5))
-		);
-		candidate += desired - represented;
+	if (extraction.time === null) {
+		return {
+			precision: 'date',
+			occurredAt: null,
+			occurredOn: extraction.date,
+			timezone,
+			timePeriod: null
+		};
 	}
 
-	const verified = formatParts(new Date(candidate), timezone);
-	if (verified.date !== localDate || verified.time !== localTime) {
-		throw new Error('Tiden finns inte i den valda tidszonen.');
+	if (extraction.time.kind === 'period') {
+		return {
+			precision: 'approximate',
+			occurredAt: null,
+			occurredOn: extraction.date,
+			timezone,
+			timePeriod: extraction.time.value
+		};
 	}
-	return new Date(candidate).toISOString();
+
+	return {
+		precision: extraction.time.kind,
+		occurredAt: zonedDateTimeToIso(extraction.date, extraction.time.localTime, timezone),
+		timezone,
+		timePeriod: null
+	};
 }
 
-function formatTime(isoTimestamp: string, timezone: string): string {
-	return formatParts(new Date(isoTimestamp), timezone).time;
-}
-
-function dateInTimezone(value: Date, timezone: string): string {
-	return formatParts(value, timezone).date;
-}
-
-function formatParts(value: Date, timezone: string): { date: string; time: string } {
-	const parts = new Intl.DateTimeFormat('sv-SE', {
-		timeZone: timezone,
-		year: 'numeric',
-		month: '2-digit',
-		day: '2-digit',
-		hour: '2-digit',
-		minute: '2-digit',
-		hourCycle: 'h23'
-	}).formatToParts(value);
-	const part = (type: Intl.DateTimeFormatPartTypes) =>
-		parts.find((candidate) => candidate.type === type)?.value;
-	const year = part('year');
-	const month = part('month');
-	const day = part('day');
-	const hour = part('hour');
-	const minute = part('minute');
-	if (!year || !month || !day || !hour || !minute) throw new Error('Datum kunde inte formateras.');
-	return { date: `${year}-${month}-${day}`, time: `${hour}:${minute}` };
-}
-
-function dateOrdinal(value: string): number {
-	return Math.floor(dateAtNoonUtc(value).getTime() / DAY_MS);
-}
-
-function dateAtNoonUtc(value: string): Date {
-	const [year, month, day] = value.split('-').map(Number);
-	if (!year || !month || !day) throw new Error('Måltidens datum är ogiltigt.');
-	return new Date(Date.UTC(year, month - 1, day, 12));
+export function mealTimePeriodLabel(period: MealTimePeriod): string {
+	return MEAL_TIME_PERIOD_OPTIONS.find((option) => option.value === period)?.label ?? period;
 }

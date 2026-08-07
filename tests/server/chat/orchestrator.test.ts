@@ -58,6 +58,27 @@ describe('orchestrateChatTurn', () => {
 		expect(events.map((event) => event.type)).toEqual(['conversation', 'replace', 'done']);
 	});
 
+	it('uses the post-completion conversation in the canonical done event', async () => {
+		const renamedConversation = { ...conversation, title: 'Ny titel' };
+		const afterComplete = vi.fn(async () => renamedConversation);
+		const events: ChatStreamEvent[] = [];
+
+		await orchestrateChatTurn(
+			{
+				...turnInput(Promise.resolve(createdBegin()), events),
+				afterComplete
+			},
+			{
+				runModelStep: vi.fn(async () => textStep('Klart.')) as never,
+				completeChatTurn: vi.fn(async () => ({ message: assistantMessage, conversation })),
+				failChatTurn: vi.fn()
+			}
+		);
+
+		expect(afterComplete).toHaveBeenCalledTimes(1);
+		expect(events.at(-1)).toMatchObject({ type: 'done', conversation: renamedConversation });
+	});
+
 	it('executes independent meal calls concurrently and emits canonical records in call order', async () => {
 		const calls = [mealCall('call_1', 'Gröt'), mealCall('call_2', 'Kaffe')];
 		const runner = vi
@@ -183,6 +204,7 @@ function turnInput(beginPromise: Promise<BeginChatTurnResult>, events: ChatStrea
 		client: {} as SupabaseClient,
 		userId: '50000000-0000-4000-8000-000000000000',
 		turnId: userMessage.turnId,
+		timezone: 'Europe/Stockholm',
 		modelInput: [{ role: 'user' as const, content: userMessage.content }],
 		beginPromise,
 		signal: new AbortController().signal,
@@ -219,13 +241,7 @@ function mealCall(callId: string, description: string, responseRequired = false)
 			responseRequired,
 			mealType: null,
 			items: [{ name: description, amountText: null, ingredients: [] }],
-			occurred: {
-				precision: 'unknown',
-				occurredAt: null,
-				occurredOn: null,
-				timezone: null,
-				timeExpression: null
-			}
+			occurred: { date: null, time: null }
 		})
 	};
 }

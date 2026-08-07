@@ -1,90 +1,77 @@
-import type { MealOccurrenceInput } from '$lib/features/meals/contracts';
+import { LOCAL_TIME_PATTERN } from '$lib/date-time';
+import {
+	MEAL_LIMITS,
+	MEAL_TIME_PERIODS,
+	MEAL_TYPES,
+	type MealOccurrenceExtraction
+} from '$lib/features/meals/contracts';
+import { occurrenceFromExtraction } from '$lib/features/meals/meal-time';
+import {
+	hasAllowedIngredientCount,
+	hasAllowedMealPayloadSize,
+	mealNameSchema,
+	mealTimePeriodSchema,
+	mealTypeSchema,
+	nullableMealAmountSchema
+} from '$lib/features/meals/validation';
 import { createMealFromChat, type RecordMealInput } from '$lib/server/meals/meals';
 import type { RegisteredTool } from './registry';
 import * as v from 'valibot';
 
-const text = (maxLength: number) =>
-	v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(maxLength));
-const nullableAmount = v.nullable(text(80));
-const timezone = v.pipe(text(255), v.check(validTimezone, 'Ogiltig tidszon.'));
-
-const occurrenceSchema = v.union([
+const localTime = v.pipe(v.string(), v.regex(LOCAL_TIME_PATTERN));
+const timeSchema = v.union([
+	v.strictObject({ kind: v.literal('exact'), localTime }),
+	v.strictObject({ kind: v.literal('approximate'), localTime }),
 	v.strictObject({
-		precision: v.literal('exact'),
-		occurredAt: v.pipe(v.string(), v.isoTimestamp()),
-		timezone,
-		timeExpression: v.nullable(text(160))
-	}),
-	v.strictObject({
-		precision: v.literal('approximate'),
-		occurredAt: v.pipe(v.string(), v.isoTimestamp()),
-		timezone,
-		timeExpression: text(160)
-	}),
-	v.strictObject({
-		precision: v.literal('approximate'),
-		occurredAt: v.null(),
-		occurredOn: v.pipe(v.string(), v.isoDate()),
-		timezone,
-		timeExpression: text(160)
-	}),
-	v.strictObject({
-		precision: v.literal('date'),
-		occurredAt: v.null(),
-		occurredOn: v.pipe(v.string(), v.isoDate()),
-		timezone,
-		timeExpression: v.nullable(text(160))
-	}),
-	v.strictObject({
-		precision: v.literal('unknown'),
-		occurredAt: v.null(),
-		occurredOn: v.null(),
-		timezone: v.null(),
-		timeExpression: v.null()
+		kind: v.literal('period'),
+		value: mealTimePeriodSchema
 	})
 ]);
+const occurrenceSchema = v.pipe(
+	v.strictObject({
+		date: v.nullable(v.pipe(v.string(), v.isoDate())),
+		time: v.nullable(timeSchema)
+	}),
+	v.check(
+		(occurrence) => occurrence.date !== null || occurrence.time === null,
+		'En tid kräver datum.'
+	)
+);
 
 const ingredientSchema = v.strictObject({
-	name: text(160),
-	amountText: nullableAmount
+	name: mealNameSchema,
+	amountText: nullableMealAmountSchema
 });
 const itemSchema = v.strictObject({
-	name: text(160),
-	amountText: nullableAmount,
-	ingredients: v.pipe(v.array(ingredientSchema), v.maxLength(30))
+	name: mealNameSchema,
+	amountText: nullableMealAmountSchema,
+	ingredients: v.pipe(v.array(ingredientSchema), v.maxLength(MEAL_LIMITS.maxIngredientsPerItem))
 });
 
 export const foodLogRecordSchema = v.pipe(
 	v.strictObject({
 		responseRequired: v.boolean(),
-		mealType: v.nullable(v.picklist(['breakfast', 'lunch', 'dinner', 'snack', 'other'])),
-		items: v.pipe(v.array(itemSchema), v.minLength(1), v.maxLength(20)),
+		mealType: mealTypeSchema,
+		items: v.pipe(v.array(itemSchema), v.minLength(1), v.maxLength(MEAL_LIMITS.maxItems)),
 		occurred: occurrenceSchema
 	}),
 	v.check(
-		(input) => input.items.reduce((total, item) => total + item.ingredients.length, 0) <= 100,
+		(input) => hasAllowedIngredientCount(input.items),
 		'Måltiden innehåller för många ingredienser.'
 	),
-	v.check((input) => serializedSize(input) <= 32 * 1024, 'Måltidsregistreringen är för stor.')
+	v.check((input) => hasAllowedMealPayloadSize(input), 'Måltidsregistreringen är för stor.')
 );
 
 const amountProperty = {
 	type: ['string', 'null'],
 	minLength: 1,
-	maxLength: 80
+	maxLength: MEAL_LIMITS.maxAmountLength
 } as const;
-const timezoneProperty = { type: 'string', minLength: 1, maxLength: 255 } as const;
-const expressionProperty = {
-	type: ['string', 'null'],
-	minLength: 1,
-	maxLength: 160
-} as const;
-
 const definition = {
 	type: 'function',
 	name: 'record',
 	description:
-		'Registrera exakt ett konsumtionstillfälle för mat eller dryck som användaren själv faktiskt har konsumerat. Sätt responseRequired till true endast när användaren också ställer en faktisk fråga eller begär något som kräver ett naturligt svar efter registreringen; en ren registrering, ett tack eller en begäran om bekräftelse ska vara false. MealItem är en separat rätt, mat, dryck eller ett tillbehör i användarens beskrivning. MealIngredient är endast en uttryckligen beskriven beståndsdel i ett namngivet item; ordet "med" betyder inte automatiskt ingrediens. Exempel: "äggröra med 4 ägg och smör" är itemet Äggröra med ingredienserna Ägg (amountText 4) och Smör, medan "biff med pommes och bearnaisesås" är tre items utan härledda ingredienser. Fyll aldrig i sannolika receptingredienser. Sätt mealType endast när den framgår uttryckligen eller är bekräftad, annars null. Dela bara name och amountText när mängden är tydlig; bevara annars hela uttrycket i name och sätt amountText null. Bevara tidsuttryckets precision och hitta aldrig på en klocktid.',
+		'Registrera exakt ett konsumtionstillfälle för mat eller dryck som användaren själv faktiskt har konsumerat. Sätt responseRequired till true endast när användaren också ställer en faktisk fråga eller begär något som kräver ett naturligt svar efter registreringen; en ren registrering, ett tack eller en begäran om bekräftelse ska vara false. MealItem är en separat rätt, mat, dryck eller ett tillbehör i användarens beskrivning. MealIngredient är endast en uttryckligen beskriven beståndsdel i ett namngivet item; ordet "med" betyder inte automatiskt ingrediens. Exempel: "äggröra med 4 ägg och smör" är itemet Äggröra med ingredienserna Ägg (amountText 4) och Smör, medan "biff med pommes och bearnaisesås" är tre items utan härledda ingredienser. Fyll aldrig i sannolika receptingredienser. Sätt mealType endast när den framgår uttryckligen eller är bekräftad, annars null. Dela bara name och amountText när mängden är tydlig; bevara annars hela uttrycket i name och sätt amountText null. occurred.date är det tolkade lokala datumet i YYYY-MM-DD eller null när datumet är okänt. Datumord som "igår" hör endast till date: "igår" ger föregående lokala datum och time null. Använd time.kind exact eller approximate bara för ett uttryckligt klockslag i HH:MM. Använd period endast för en uttrycklig del av dagen: morning, lunch, afternoon, evening eller night. "Igår kväll" ger gårdagens date och period evening. Hitta aldrig på en klocktid.',
 	defer_loading: true,
 	strict: true,
 	parameters: {
@@ -94,26 +81,30 @@ const definition = {
 			responseRequired: { type: 'boolean' },
 			mealType: {
 				type: ['string', 'null'],
-				enum: ['breakfast', 'lunch', 'dinner', 'snack', 'other', null]
+				enum: [...MEAL_TYPES, null]
 			},
 			items: {
 				type: 'array',
 				minItems: 1,
-				maxItems: 20,
+				maxItems: MEAL_LIMITS.maxItems,
 				items: {
 					type: 'object',
 					additionalProperties: false,
 					properties: {
-						name: { type: 'string', minLength: 1, maxLength: 160 },
+						name: { type: 'string', minLength: 1, maxLength: MEAL_LIMITS.maxNameLength },
 						amountText: amountProperty,
 						ingredients: {
 							type: 'array',
-							maxItems: 30,
+							maxItems: MEAL_LIMITS.maxIngredientsPerItem,
 							items: {
 								type: 'object',
 								additionalProperties: false,
 								properties: {
-									name: { type: 'string', minLength: 1, maxLength: 160 },
+									name: {
+										type: 'string',
+										minLength: 1,
+										maxLength: MEAL_LIMITS.maxNameLength
+									},
 									amountText: amountProperty
 								},
 								required: ['name', 'amountText']
@@ -124,66 +115,47 @@ const definition = {
 				}
 			},
 			occurred: {
-				anyOf: [
-					{
-						type: 'object',
-						additionalProperties: false,
-						properties: {
-							precision: { type: 'string', enum: ['exact'] },
-							occurredAt: { type: 'string', format: 'date-time' },
-							timezone: timezoneProperty,
-							timeExpression: expressionProperty
-						},
-						required: ['precision', 'occurredAt', 'timezone', 'timeExpression']
-					},
-					{
-						type: 'object',
-						additionalProperties: false,
-						properties: {
-							precision: { type: 'string', enum: ['approximate'] },
-							occurredAt: { type: 'string', format: 'date-time' },
-							timezone: timezoneProperty,
-							timeExpression: { type: 'string', minLength: 1, maxLength: 160 }
-						},
-						required: ['precision', 'occurredAt', 'timezone', 'timeExpression']
-					},
-					{
-						type: 'object',
-						additionalProperties: false,
-						properties: {
-							precision: { type: 'string', enum: ['approximate'] },
-							occurredAt: { type: 'null' },
-							occurredOn: { type: 'string', format: 'date' },
-							timezone: timezoneProperty,
-							timeExpression: { type: 'string', minLength: 1, maxLength: 160 }
-						},
-						required: ['precision', 'occurredAt', 'occurredOn', 'timezone', 'timeExpression']
-					},
-					{
-						type: 'object',
-						additionalProperties: false,
-						properties: {
-							precision: { type: 'string', enum: ['date'] },
-							occurredAt: { type: 'null' },
-							occurredOn: { type: 'string', format: 'date' },
-							timezone: timezoneProperty,
-							timeExpression: expressionProperty
-						},
-						required: ['precision', 'occurredAt', 'occurredOn', 'timezone', 'timeExpression']
-					},
-					{
-						type: 'object',
-						additionalProperties: false,
-						properties: {
-							precision: { type: 'string', enum: ['unknown'] },
-							occurredAt: { type: 'null' },
-							occurredOn: { type: 'null' },
-							timezone: { type: 'null' },
-							timeExpression: { type: 'null' }
-						},
-						required: ['precision', 'occurredAt', 'occurredOn', 'timezone', 'timeExpression']
+				type: 'object',
+				additionalProperties: false,
+				properties: {
+					date: { type: ['string', 'null'], format: 'date' },
+					time: {
+						anyOf: [
+							{ type: 'null' },
+							{
+								type: 'object',
+								additionalProperties: false,
+								properties: {
+									kind: { type: 'string', enum: ['exact'] },
+									localTime: { type: 'string', pattern: LOCAL_TIME_PATTERN.source }
+								},
+								required: ['kind', 'localTime']
+							},
+							{
+								type: 'object',
+								additionalProperties: false,
+								properties: {
+									kind: { type: 'string', enum: ['approximate'] },
+									localTime: { type: 'string', pattern: LOCAL_TIME_PATTERN.source }
+								},
+								required: ['kind', 'localTime']
+							},
+							{
+								type: 'object',
+								additionalProperties: false,
+								properties: {
+									kind: { type: 'string', enum: ['period'] },
+									value: {
+										type: 'string',
+										enum: [...MEAL_TIME_PERIODS]
+									}
+								},
+								required: ['kind', 'value']
+							}
+						]
 					}
-				]
+				},
+				required: ['date', 'time']
 			}
 		},
 		required: ['responseRequired', 'mealType', 'items', 'occurred']
@@ -200,7 +172,10 @@ export const foodLogRecordTool = {
 		const mealInput: RecordMealInput = {
 			mealType: input.mealType,
 			items: input.items,
-			occurred: input.occurred as MealOccurrenceInput
+			occurred: occurrenceFromExtraction(
+				input.occurred as MealOccurrenceExtraction,
+				context.timezone
+			)
 		};
 		const meal = await createMealFromChat(context.client, {
 			userId: context.userId,
@@ -221,16 +196,3 @@ export const foodLogRecordTool = {
 		};
 	}
 } satisfies RegisteredTool;
-
-function serializedSize(value: unknown): number {
-	return new TextEncoder().encode(JSON.stringify(value)).byteLength;
-}
-
-function validTimezone(value: string): boolean {
-	try {
-		new Intl.DateTimeFormat('sv-SE', { timeZone: value }).format();
-		return true;
-	} catch {
-		return false;
-	}
-}

@@ -1,5 +1,4 @@
 import type {
-	ChatMessage,
 	ConversationCursor,
 	ConversationDetailPage,
 	ConversationHistoryCursor,
@@ -20,15 +19,6 @@ type ConversationRow = {
 	created_at: string;
 	updated_at: string;
 	last_message_at: string;
-};
-
-type MessageRow = {
-	id: string;
-	conversation_id: string;
-	turn_id: string;
-	role: 'user' | 'assistant';
-	content: string;
-	created_at: string;
 };
 
 export class ConversationNotFoundError extends Error {}
@@ -193,16 +183,5 @@ export function mapConversation(row: ConversationRow): ConversationSummary {
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 		lastMessageAt: row.last_message_at
-	};
-}
-
-export function mapMessage(row: MessageRow): ChatMessage {
-	return {
-		id: row.id,
-		conversationId: row.conversation_id,
-		turnId: row.turn_id,
-		role: row.role,
-		content: row.content,
-		createdAt: row.created_at
 	};
 }

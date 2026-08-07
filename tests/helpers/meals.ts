@@ -25,7 +25,7 @@ export function mealFixture(overrides: Partial<Meal> = {}): Meal {
 			occurredAt: null,
 			occurredOn: null,
 			timezone: null,
-			timeExpression: null
+			timePeriod: null
 		},
 		createdAt: '2026-08-06T07:00:00.000Z',
 		updatedAt: '2026-08-06T07:00:00.000Z',

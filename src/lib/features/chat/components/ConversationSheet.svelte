@@ -16,7 +16,10 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import { cubicOut } from 'svelte/easing';
 	import { fade } from 'svelte/transition';
-	import { getRecentConversationDateLabel } from '../conversation-date';
+	import {
+		getConversationStartDateLabel,
+		getRecentConversationDateLabel
+	} from '../conversation-date';
 	import type { ConversationPage } from '../contracts';
 	import AssistantMessageLoader from './AssistantMessageLoader.svelte';
 	import ChatComposer from './ChatComposer.svelte';
@@ -36,12 +39,7 @@
 	const session = createChatSession({
 		initialConversationPage: untrack(() => initialConversationPage),
 		onMessagesChanged: scrollToBottom,
-		onJournalRecordCreated: (entry) => {
-			if (entry.record.kind === 'meal') {
-				window.dispatchEvent(new CustomEvent('tracemealcreated', { detail: entry.record.value }));
-			}
-			void scrollToBottom();
-		}
+		onJournalRecordCreated: () => void scrollToBottom()
 	});
 	let recordsByTurn = $derived.by(() => {
 		const grouped = new SvelteMap<string, typeof session.journalRecords>();
@@ -52,6 +50,14 @@
 		return grouped;
 	});
 	let recentConversations = $derived(session.conversations.slice(0, 3));
+	let completedTurnIds = $derived.by(
+		() =>
+			new Set(
+				session.messages
+					.filter((message) => message.role === 'assistant' && !message.pending)
+					.map((message) => message.turnId)
+			)
+	);
 	let conversationActive = $derived(
 		!session.historyOpen &&
 			(session.activeConversationId !== null ||
@@ -64,18 +70,15 @@
 		const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 		const syncFullscreen = () => (fullscreen = fullscreenQuery.matches);
 		const syncMotion = () => (reducedMotion = motionQuery.matches);
-		const reloadMeal = () => session.reloadActiveConversation();
 
 		syncFullscreen();
 		syncMotion();
 		fullscreenQuery.addEventListener('change', syncFullscreen);
 		motionQuery.addEventListener('change', syncMotion);
-		window.addEventListener('tracemealreloadrequested', reloadMeal);
 
 		return () => {
 			fullscreenQuery.removeEventListener('change', syncFullscreen);
 			motionQuery.removeEventListener('change', syncMotion);
-			window.removeEventListener('tracemealreloadrequested', reloadMeal);
 		};
 	});
 
@@ -120,17 +123,6 @@
 		return () => {
 			if (messageScroller === node) messageScroller = null;
 		};
-	}
-
-	function formatTime(value: string): string {
-		const date = new Date(value);
-		return `Idag ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
-	}
-
-	function turnCompleted(turnId: string): boolean {
-		return session.messages.some(
-			(message) => message.turnId === turnId && message.role === 'assistant' && !message.pending
-		);
 	}
 
 	function turnHasRecords(turnId: string): boolean {
@@ -198,13 +190,7 @@
 							onclick={session.openHistory}
 						/>
 
-						<Popover
-							placement="bottom-end"
-							size="sm"
-							role="menu"
-							width="max-content"
-							yOffset={-12}
-						>
+						<Popover placement="bottom-end" size="sm" role="menu" width="max-content" yOffset={-12}>
 							{#snippet trigger(menuOpen, toggle)}
 								<Button
 									variant="ghost"
@@ -295,7 +281,9 @@
 										</div>
 									{/if}
 									{#if session.startedAt}
-										<time datetime={session.startedAt}>{formatTime(session.startedAt)}</time>
+										<time datetime={session.startedAt}
+											>{getConversationStartDateLabel(session.startedAt)}</time
+										>
 									{/if}
 									{#each session.messages as message (message.id)}
 										{#if message.role === 'user'}
@@ -311,8 +299,9 @@
 														{#if entry.record.kind === 'meal'}
 															<MealCard
 																meal={entry.record.value}
-																editable={turnCompleted(message.turnId)}
+																editable={completedTurnIds.has(message.turnId)}
 																onUpdated={session.updateMealRecord}
+																onReloadRequested={session.reloadActiveConversation}
 															/>
 														{/if}
 													{/each}
