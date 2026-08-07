@@ -1,9 +1,7 @@
 <script lang="ts">
-	import DeleteIcon from '$lib/components/icons/DeleteIcon.svelte';
 	import EditIcon from '$lib/components/icons/EditIcon.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 	import {
-		MEAL_TIME_PERIOD_OPTIONS,
 		MEAL_TYPE_OPTIONS,
 		mealTypeLabel,
 		type Meal,
@@ -25,19 +23,14 @@
 	} from '../meal-mutations';
 	import { formatMealOccurrence, occurrenceForMutation } from '../meal-time';
 	import { updateMeal } from '../meals.remote';
+	import MealEntryEditor from './MealEntryEditor.svelte';
+	import MealItemSection from './MealItemSection.svelte';
+	import MealOccurrenceEditor from './MealOccurrenceEditor.svelte';
 
-	type Precision = Meal['occurrence']['precision'];
 	type Editor =
 		| ({ kind: 'item' } & MealItemDraft)
 		| ({ kind: 'ingredient' } & MealIngredientDraft)
 		| ({ kind: 'occurrence' } & MealOccurrenceDraft);
-
-	const PRECISION_OPTIONS: ReadonlyArray<{ value: Precision; label: string }> = [
-		{ value: 'exact', label: 'Exakt tid' },
-		{ value: 'approximate', label: 'Ungefärlig tid' },
-		{ value: 'date', label: 'Endast datum' },
-		{ value: 'unknown', label: 'Datum ej angivet' }
-	];
 
 	let {
 		meal,
@@ -120,32 +113,26 @@
 		await commit({ mealType });
 	}
 
-	async function saveItem(event: SubmitEvent) {
-		event.preventDefault();
-		if (!editor || editor.kind !== 'item') return;
+	async function saveItem(draft: MealItemDraft) {
 		try {
-			await commit({ items: upsertMealItem(meal.items, editor) }, true);
+			await commit({ items: upsertMealItem(meal.items, draft) }, true);
 		} catch (cause) {
 			showError(cause instanceof Error ? cause.message : 'Måltidsdelen kunde inte ändras.');
 		}
 	}
 
-	async function saveIngredient(event: SubmitEvent) {
-		event.preventDefault();
-		if (!editor || editor.kind !== 'ingredient') return;
+	async function saveIngredient(draft: MealIngredientDraft) {
 		try {
-			await commit({ items: upsertMealIngredient(meal.items, editor) }, true);
+			await commit({ items: upsertMealIngredient(meal.items, draft) }, true);
 		} catch (cause) {
 			showError(cause instanceof Error ? cause.message : 'Ingrediensen kunde inte ändras.');
 		}
 	}
 
-	async function saveOccurrence(event: SubmitEvent) {
-		event.preventDefault();
-		if (!editor || editor.kind !== 'occurrence') return;
+	async function saveOccurrence(draft: MealOccurrenceDraft) {
 		let occurrence: MealOccurrenceInput;
 		try {
-			occurrence = mealOccurrenceFromDraft(editor);
+			occurrence = mealOccurrenceFromDraft(draft);
 		} catch (cause) {
 			showError(cause instanceof Error ? cause.message : 'Datumet eller tiden är ogiltig.');
 			return;
@@ -153,12 +140,12 @@
 		await commit({ occurrence }, true);
 	}
 
-	async function removeItem(itemId: string) {
+	async function removeItemById(itemId: string) {
 		if (meal.items.length <= 1) return;
 		await commit({ items: removeMealItem(meal.items, itemId) });
 	}
 
-	async function removeIngredient(itemId: string, ingredientId: string) {
+	async function removeIngredientById(itemId: string, ingredientId: string) {
 		await commit({ items: removeMealIngredient(meal.items, itemId, ingredientId) });
 	}
 
@@ -185,10 +172,7 @@
 			retryMutation?.signature === signature ? retryMutation.id : crypto.randomUUID();
 		retryMutation = { signature, id: clientMutationId };
 		try {
-			const updated = await updateMeal({
-				...mutation,
-				clientMutationId
-			});
+			const updated = await updateMeal({ ...mutation, clientMutationId });
 			retryMutation = null;
 			onUpdated?.(updated);
 			if (closeEditor) editor = null;
@@ -200,10 +184,6 @@
 		} finally {
 			saving = false;
 		}
-	}
-
-	function requestReload() {
-		onReloadRequested?.();
 	}
 
 	function clearError() {
@@ -245,212 +225,52 @@
 	{/if}
 
 	{#if editor?.kind === 'occurrence'}
-		<form class="occurrence-editor" onsubmit={saveOccurrence}>
-			<Select
-				value={editor.precision}
-				options={PRECISION_OPTIONS}
-				placeholder="Välj precision"
-				label="Tidsprecision"
-				disabled={saving}
-				onValueChange={(precision) => {
-					if (editor?.kind !== 'occurrence') return;
-					editor.precision = precision;
-					if (precision !== 'approximate') editor.timePeriod = null;
-					if (precision === 'date' || precision === 'unknown') editor.time = '';
-				}}
-			/>
-			{#if editor.precision !== 'unknown'}
-				<label>
-					<span>Datum</span>
-					<input type="date" bind:value={editor.date} disabled={saving} required />
-				</label>
-			{/if}
-			{#if editor.precision === 'exact' || editor.precision === 'approximate'}
-				<label>
-					<span>{editor.precision === 'exact' ? 'Tid' : 'Ungefärlig klocktid (valfri)'}</span>
-					<input
-						type="time"
-						bind:value={editor.time}
-						disabled={saving}
-						required={editor.precision === 'exact'}
-						oninput={() => {
-							if (editor?.kind === 'occurrence' && editor.time) editor.timePeriod = null;
-						}}
-					/>
-				</label>
-			{/if}
-			{#if editor.precision === 'approximate'}
-				<div class="time-period-field">
-					<span>Tidsperiod om klockslag saknas</span>
-					<Select
-						value={editor.timePeriod}
-						options={MEAL_TIME_PERIOD_OPTIONS}
-						placeholder="Välj tidsperiod"
-						label="Tidsperiod"
-						disabled={saving}
-						onValueChange={(timePeriod) => {
-							if (editor?.kind !== 'occurrence') return;
-							editor.timePeriod = timePeriod;
-							editor.time = '';
-						}}
-					/>
-				</div>
-			{/if}
-			<div class="form-actions">
-				<button class="save" type="submit" disabled={saving}>Spara</button>
-				<button type="button" disabled={saving} onclick={() => (editor = null)}>Avbryt</button>
-			</div>
-		</form>
+		<MealOccurrenceEditor
+			draft={editor}
+			{saving}
+			onChange={(draft) => (editor = { kind: 'occurrence', ...draft })}
+			onSave={saveOccurrence}
+			onCancel={() => (editor = null)}
+		/>
 	{/if}
 
 	<div class="items">
 		{#each meal.items as item (item.id)}
-			<section class="meal-item">
-				{#if editor?.kind === 'item' && editor.id === item.id}
-					<form class="inline-editor" onsubmit={saveItem}>
-						<label>
-							<span>Namn</span>
-							<input bind:value={editor.name} maxlength="160" disabled={saving} required />
-						</label>
-						<label>
-							<span>Mängd (valfri)</span>
-							<input bind:value={editor.amountText} maxlength="80" disabled={saving} />
-						</label>
-						<div class="form-actions">
-							<button class="save" type="submit" disabled={saving}>Spara</button>
-							<button type="button" disabled={saving} onclick={() => (editor = null)}>
-								Avbryt
-							</button>
-						</div>
-					</form>
-				{:else}
-					<div class="item-row">
-						<p class="item-name">
-							{item.name}{#if item.amountText}<span> · {item.amountText}</span>{/if}
-						</p>
-						{#if editing}
-							<div class="row-actions">
-								<button
-									type="button"
-									aria-label={`Redigera ${item.name}`}
-									disabled={saving}
-									onclick={() => editItem(item.id)}><EditIcon /></button
-								>
-								{#if meal.items.length > 1}
-									<button
-										type="button"
-										aria-label={`Ta bort ${item.name}`}
-										disabled={saving}
-										onclick={() => removeItem(item.id)}><DeleteIcon /></button
-									>
-								{/if}
-							</div>
-						{/if}
-					</div>
-				{/if}
-
-				{#if item.ingredients.length > 0}
-					<ul aria-label={`Ingredienser i ${item.name}`}>
-						{#each item.ingredients as ingredient (ingredient.id)}
-							<li>
-								{#if editor?.kind === 'ingredient' && editor.id === ingredient.id}
-									<form class="inline-editor ingredient-editor" onsubmit={saveIngredient}>
-										<label>
-											<span>Namn</span>
-											<input bind:value={editor.name} maxlength="160" disabled={saving} required />
-										</label>
-										<label>
-											<span>Mängd (valfri)</span>
-											<input bind:value={editor.amountText} maxlength="80" disabled={saving} />
-										</label>
-										<div class="form-actions">
-											<button class="save" type="submit" disabled={saving}>Spara</button>
-											<button type="button" disabled={saving} onclick={() => (editor = null)}>
-												Avbryt
-											</button>
-										</div>
-									</form>
-								{:else}
-									<div class="ingredient-row">
-										<span>
-											{ingredient.name}{#if ingredient.amountText}
-												· {ingredient.amountText}{/if}
-										</span>
-										{#if editing}
-											<div class="row-actions">
-												<button
-													type="button"
-													aria-label={`Redigera ${ingredient.name}`}
-													disabled={saving}
-													onclick={() => editIngredient(item.id, ingredient.id)}
-													><EditIcon /></button
-												>
-												<button
-													type="button"
-													aria-label={`Ta bort ${ingredient.name}`}
-													disabled={saving}
-													onclick={() => removeIngredient(item.id, ingredient.id)}
-													><DeleteIcon /></button
-												>
-											</div>
-										{/if}
-									</div>
-								{/if}
-							</li>
-						{/each}
-					</ul>
-				{/if}
-
-				{#if editing}
-					{#if editor?.kind === 'ingredient' && editor.itemId === item.id && editor.id === null}
-						<form class="inline-editor ingredient-editor" onsubmit={saveIngredient}>
-							<label>
-								<span>Namn</span>
-								<input bind:value={editor.name} maxlength="160" disabled={saving} required />
-							</label>
-							<label>
-								<span>Mängd (valfri)</span>
-								<input bind:value={editor.amountText} maxlength="80" disabled={saving} />
-							</label>
-							<div class="form-actions">
-								<button class="save" type="submit" disabled={saving}>Spara</button>
-								<button type="button" disabled={saving} onclick={() => (editor = null)}>
-									Avbryt
-								</button>
-							</div>
-						</form>
-					{:else}
-						<button
-							class="add-button"
-							type="button"
-							disabled={saving || editor !== null}
-							onclick={() => addIngredient(item.id)}>Lägg till ingrediens</button
-						>
-					{/if}
-				{/if}
-			</section>
+			<MealItemSection
+				{item}
+				{editing}
+				{saving}
+				editorActive={editor !== null}
+				canRemove={meal.items.length > 1}
+				itemDraft={editor?.kind === 'item' && editor.id === item.id ? editor : null}
+				ingredientDraft={editor?.kind === 'ingredient' && editor.itemId === item.id ? editor : null}
+				onEditItem={() => editItem(item.id)}
+				onRemoveItem={() => removeItemById(item.id)}
+				onAddIngredient={() => addIngredient(item.id)}
+				onEditIngredient={(ingredientId) => editIngredient(item.id, ingredientId)}
+				onRemoveIngredient={(ingredientId) => removeIngredientById(item.id, ingredientId)}
+				onItemDraftChange={(draft) => (editor = { kind: 'item', ...draft })}
+				onIngredientDraftChange={(draft) => (editor = { kind: 'ingredient', ...draft })}
+				onSaveItem={saveItem}
+				onSaveIngredient={saveIngredient}
+				onCancelEditor={() => (editor = null)}
+			/>
 		{/each}
 	</div>
 
 	{#if editing}
 		{#if editor?.kind === 'item' && editor.id === null}
-			<form class="inline-editor new-item-editor" onsubmit={saveItem}>
-				<label>
-					<span>Namn</span>
-					<input bind:value={editor.name} maxlength="160" disabled={saving} required />
-				</label>
-				<label>
-					<span>Mängd (valfri)</span>
-					<input bind:value={editor.amountText} maxlength="80" disabled={saving} />
-				</label>
-				<div class="form-actions">
-					<button class="save" type="submit" disabled={saving}>Spara</button>
-					<button type="button" disabled={saving} onclick={() => (editor = null)}>Avbryt</button>
-				</div>
-			</form>
+			<MealEntryEditor
+				draft={editor}
+				{saving}
+				variant="new-item"
+				onChange={(draft) => (editor = { kind: 'item', ...draft })}
+				onSave={saveItem}
+				onCancel={() => (editor = null)}
+			/>
 		{:else}
 			<button
-				class="add-button add-item-button"
+				class="add-item-button"
 				type="button"
 				disabled={saving || editor !== null}
 				onclick={addItem}>Lägg till mat eller dryck</button
@@ -462,7 +282,7 @@
 		<div class="edit-error" role="status">
 			<span>{errorMessage}</span>
 			{#if revisionConflict}
-				<button type="button" onclick={requestReload}>Ladda om</button>
+				<button type="button" onclick={() => onReloadRequested?.()}>Ladda om</button>
 			{/if}
 		</div>
 	{/if}
@@ -492,22 +312,15 @@
 		color: var(--text);
 	}
 
-	.meal-heading,
-	.item-row,
-	.ingredient-row {
+	.meal-heading {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.75rem;
 	}
 
-	h3,
-	p {
+	h3 {
 		margin: 0;
-	}
-
-	h3,
-	.item-name {
 		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
 		font-size: 1rem;
 		font-weight: 550;
@@ -526,10 +339,16 @@
 		white-space: nowrap;
 	}
 
+	.items {
+		display: flex;
+		flex-direction: column;
+		gap: 0.72rem;
+		margin-top: 0.75rem;
+	}
+
 	.change-time-button,
-	.add-button,
+	.add-item-button,
 	.edit-button,
-	.form-actions button,
 	.edit-error button {
 		border: 0;
 		padding: 0;
@@ -543,62 +362,6 @@
 
 	.change-time-button {
 		margin-top: 0.25rem;
-	}
-
-	.items {
-		display: flex;
-		flex-direction: column;
-		gap: 0.72rem;
-		margin-top: 0.75rem;
-	}
-
-	.meal-item {
-		min-width: 0;
-	}
-
-	.item-name span,
-	.ingredient-row {
-		color: color-mix(in srgb, var(--text) 82%, transparent);
-	}
-
-	ul {
-		display: flex;
-		flex-direction: column;
-		gap: 0.1rem;
-		margin: 0.22rem 0 0;
-		padding: 0 0 0 0.65rem;
-		font-size: 0.92rem;
-		line-height: 1.4;
-		list-style: none;
-	}
-
-	.row-actions {
-		display: flex;
-		flex: 0 0 auto;
-		gap: 0.05rem;
-	}
-
-	.row-actions button {
-		--icon-size: 0.95rem;
-		display: grid;
-		width: 2.1rem;
-		height: 2.1rem;
-		place-items: center;
-		border: 0;
-		border-radius: 999px;
-		padding: 0;
-		background: transparent;
-		color: color-mix(in srgb, var(--text) 52%, transparent);
-		cursor: pointer;
-	}
-
-	.row-actions button:hover {
-		background: color-mix(in srgb, var(--text) 6%, transparent);
-		color: var(--text);
-	}
-
-	.add-button {
-		margin-top: 0.35rem;
 	}
 
 	.add-item-button {
@@ -615,66 +378,10 @@
 	}
 
 	.change-time-button:hover,
-	.add-button:hover,
+	.add-item-button:hover,
 	.edit-button:hover,
-	.form-actions button:hover,
 	.edit-error button:hover {
 		color: color-mix(in srgb, var(--accent) 76%, var(--text));
-	}
-
-	.occurrence-editor,
-	.inline-editor {
-		display: grid;
-		gap: 0.55rem;
-		margin-top: 0.65rem;
-		border-radius: 0.65rem;
-		padding: 0.65rem;
-		background: color-mix(in srgb, var(--text) 4%, transparent);
-	}
-
-	.occurrence-editor label,
-	.time-period-field,
-	.inline-editor label {
-		display: grid;
-		gap: 0.2rem;
-		color: var(--muted);
-		font-size: 0.78rem;
-	}
-
-	input {
-		width: 100%;
-		min-height: 2.15rem;
-		box-sizing: border-box;
-		border: 0;
-		border-radius: 0.4rem;
-		padding: 0.3rem 0.45rem;
-		background: color-mix(in srgb, var(--background) 72%, transparent);
-		color: var(--text);
-		font-size: 0.92rem;
-		outline: none;
-	}
-
-	input:focus-visible,
-	button:focus-visible {
-		outline: 2px solid color-mix(in srgb, var(--text) 38%, transparent);
-		outline-offset: 1px;
-	}
-
-	.form-actions {
-		display: flex;
-		gap: 0.85rem;
-	}
-
-	.form-actions button:not(.save) {
-		color: var(--muted);
-	}
-
-	.ingredient-editor {
-		margin: 0.35rem 0;
-	}
-
-	.new-item-editor {
-		margin-top: 0.75rem;
 	}
 
 	.edit-error {
@@ -690,6 +397,11 @@
 		color: inherit;
 		text-decoration: underline;
 		text-underline-offset: 0.15em;
+	}
+
+	button:focus-visible {
+		outline: 2px solid color-mix(in srgb, var(--text) 38%, transparent);
+		outline-offset: 1px;
 	}
 
 	button:disabled {
