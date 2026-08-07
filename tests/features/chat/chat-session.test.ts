@@ -7,13 +7,14 @@ import type { TurnJournalRecord } from '$lib/features/journal/contracts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mealFixture, mealRecordFixture } from '../../helpers/meals';
 
-const { getConversation, streamChat } = vi.hoisted(() => ({
+const { deleteConversation, getConversation, streamChat } = vi.hoisted(() => ({
+	deleteConversation: vi.fn(),
 	getConversation: vi.fn(),
 	streamChat: vi.fn()
 }));
 
 vi.mock('$lib/features/chat/conversations.remote', () => ({
-	deleteConversation: vi.fn(),
+	deleteConversation,
 	getConversation,
 	listConversations: vi.fn(),
 	renameConversation: vi.fn()
@@ -30,6 +31,7 @@ const initialConversationPage: ConversationPage = {
 };
 
 beforeEach(() => {
+	deleteConversation.mockReset();
 	getConversation.mockReset();
 	streamChat.mockReset();
 });
@@ -119,6 +121,33 @@ describe('ChatSession.selectConversation', () => {
 			before: null
 		});
 		expect(onMessagesChanged).toHaveBeenCalledTimes(1);
+	});
+
+	it('returns to history after deleting a conversation opened from history', async () => {
+		const conversation = detail(initialConversationPage.conversations[0]);
+		getConversation.mockResolvedValueOnce(conversation);
+		deleteConversation.mockResolvedValueOnce({ id: conversation.id });
+		const session = createChatSession({ initialConversationPage, onMessagesChanged: vi.fn() });
+
+		session.openHistory();
+		await session.selectConversation(conversation.id);
+		await session.deleteConversation();
+
+		expect(session.activeConversationId).toBeNull();
+		expect(session.historyOpen).toBe(true);
+	});
+
+	it('opens a new chat after deleting a directly opened conversation', async () => {
+		const conversation = detail(initialConversationPage.conversations[0]);
+		getConversation.mockResolvedValueOnce(conversation);
+		deleteConversation.mockResolvedValueOnce({ id: conversation.id });
+		const session = createChatSession({ initialConversationPage, onMessagesChanged: vi.fn() });
+
+		await session.selectConversation(conversation.id);
+		await session.deleteConversation();
+
+		expect(session.activeConversationId).toBeNull();
+		expect(session.historyOpen).toBe(false);
 	});
 
 	it('ignores an older response after another conversation has been selected', async () => {

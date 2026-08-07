@@ -215,6 +215,7 @@
 				size="sm"
 				role="menu"
 				width="max-content"
+				yOffset={-12}
 				onOpenChange={(open) => setConversationMenuOpen(conversation.id, open)}
 			>
 				{#snippet trigger(menuOpen, toggle)}
@@ -225,6 +226,7 @@
 						aria-label={`Meny för ${conversation.title}`}
 						aria-haspopup="menu"
 						aria-expanded={menuOpen}
+						data-popover-open={menuOpen}
 						onclick={toggle}
 					/>
 				{/snippet}

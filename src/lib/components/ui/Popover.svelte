@@ -16,6 +16,7 @@
 		role,
 		width,
 		fullWidth = false,
+		yOffset = 0,
 		onOpenChange
 	}: {
 		trigger: Snippet<[boolean, () => void]>;
@@ -26,6 +27,7 @@
 		role?: 'menu' | 'dialog';
 		width?: string;
 		fullWidth?: boolean;
+		yOffset?: number;
 		onOpenChange?: (open: boolean) => void;
 	} = $props();
 
@@ -116,7 +118,7 @@
 		}
 
 		content.style.left = `${Math.round(clamp(left, viewportPadding, maxLeft))}px`;
-		content.style.top = `${Math.round(clamp(top, viewportPadding, maxTop))}px`;
+		content.style.top = `${Math.round(clamp(top + yOffset, viewportPadding, maxTop))}px`;
 		content.style.visibility = 'visible';
 	}
 

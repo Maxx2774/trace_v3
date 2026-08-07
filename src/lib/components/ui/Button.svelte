@@ -150,6 +150,11 @@
 		color: var(--text);
 	}
 
+	.ghost[data-popover-open='true'] {
+		background: color-mix(in srgb, var(--text) 7%, transparent);
+		color: var(--text);
+	}
+
 	.ghost:active {
 		background: color-mix(in srgb, var(--text) 12%, transparent);
 	}

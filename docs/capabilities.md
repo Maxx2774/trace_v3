@@ -80,7 +80,8 @@ funktionalitet hör hemma i `product.md`.
 - När användaren närmar sig början av den laddade historiken hämtas 15 äldre hela vändor,
   normalt upp till 30 meddelanden, med cursor-paginering. Äldre innehåll läggs ovanför utan
   att flytta den synliga scrollpositionen, och sena svar från äldre val ignoreras.
-- En konversation kan raderas från både listvyn och den öppna konversationen.
+- En konversation kan raderas från både listvyn och den öppna konversationen. Om den öppnades
+  från listvyn återgår panelen till listan efter radering; annars visas en ny chatt.
 
 ## Konversationstitlar
 

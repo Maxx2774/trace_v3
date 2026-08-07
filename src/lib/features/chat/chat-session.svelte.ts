@@ -59,6 +59,7 @@ class ChatSession {
 	private nextConversationCursor = $state<ConversationCursor | null>(null);
 	private olderMessagesCursor = $state<ConversationHistoryCursor | null>(null);
 	private conversationSelection = 0;
+	private returnToHistoryAfterDelete = false;
 	private retryableTurn = $state<{
 		turnId: string;
 		message: string;
@@ -145,6 +146,7 @@ class ChatSession {
 		this.olderMessagesError = null;
 		this.olderMessagesCursor = null;
 		this.historyOpen = false;
+		this.returnToHistoryAfterDelete = false;
 	};
 
 	deleteConversation = async (conversationId = this.activeConversationId) => {
@@ -159,7 +161,11 @@ class ChatSession {
 		try {
 			const { id } = await deleteConversationRemote(conversationId);
 			this.conversations = this.conversations.filter((conversation) => conversation.id !== id);
-			if (this.activeConversationId === id) this.startNewConversation();
+			if (this.activeConversationId === id) {
+				const returnToHistory = this.returnToHistoryAfterDelete;
+				this.startNewConversation();
+				if (returnToHistory) this.openHistory();
+			}
 		} catch {
 			this.statusMessage = 'Konversationen kunde inte raderas.';
 		}
@@ -206,8 +212,12 @@ class ChatSession {
 		if (this.activeStream) return;
 		const selection = ++this.conversationSelection;
 		const summary = this.conversations.find((conversation) => conversation.id === conversationId);
+		const returnToHistoryAfterDelete =
+			this.historyOpen ||
+			(this.activeConversationId === conversationId && this.returnToHistoryAfterDelete);
 
 		this.activeConversationId = conversationId;
+		this.returnToHistoryAfterDelete = returnToHistoryAfterDelete;
 		this.messages = [];
 		this.journalRecords = [];
 		this.startedAt = summary?.createdAt ?? null;

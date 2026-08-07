@@ -198,7 +198,13 @@
 							onclick={session.openHistory}
 						/>
 
-						<Popover placement="bottom-end" size="sm" role="menu" width="max-content">
+						<Popover
+							placement="bottom-end"
+							size="sm"
+							role="menu"
+							width="max-content"
+							yOffset={-12}
+						>
 							{#snippet trigger(menuOpen, toggle)}
 								<Button
 									variant="ghost"
@@ -207,6 +213,7 @@
 									aria-label="Konversationsmeny"
 									aria-haspopup="menu"
 									aria-expanded={menuOpen}
+									data-popover-open={menuOpen}
 									onclick={toggle}
 								/>
 							{/snippet}
