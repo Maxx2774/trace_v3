@@ -5,14 +5,20 @@
 	let {
 		autoFocus = false,
 		disabled = false,
+		onDraftChange,
+		onMultilineChange,
 		onSubmit,
+		singleRow = false,
 		streaming = false,
 		stoppable,
 		onStop
 	}: {
 		autoFocus?: boolean;
 		disabled?: boolean;
+		onDraftChange?: (hasDraft: boolean) => void;
+		onMultilineChange?: (multiline: boolean) => void;
 		onSubmit: (message: string) => void;
+		singleRow?: boolean;
 		streaming?: boolean;
 		stoppable?: boolean;
 		onStop?: () => void;
@@ -21,11 +27,16 @@
 	let message = $state('');
 	let textarea = $state<HTMLTextAreaElement | null>(null);
 	let textareaHeight = $state(30);
+	let hasDraft = $state(false);
+	let multiline = $state(false);
 	let canSubmit = $derived(message.trim().length > 0 && !disabled && !streaming);
 	let showStop = $derived(streaming && (stoppable ?? true));
 	let limitReached = $derived(message.length >= 5_000);
 	const singleLineHeight = 30;
 	const singleLineTolerance = 12;
+	const multilineMinHeight = 56;
+	const defaultMaxTextareaHeight = 120;
+	const singleRowMaxTextareaHeight = 176;
 
 	$effect(() => {
 		if (!autoFocus || disabled || !textarea || window.matchMedia('(max-width: 959px)').matches) {
@@ -38,14 +49,34 @@
 
 	function resize() {
 		if (!textarea) return;
+		const nextHasDraft = textarea.value.length > 0;
+		if (nextHasDraft !== hasDraft) {
+			hasDraft = nextHasDraft;
+			onDraftChange?.(nextHasDraft);
+		}
 		textarea.style.height = 'auto';
 		const contentHeight = textarea.scrollHeight;
-		textareaHeight =
-			contentHeight <= singleLineHeight + singleLineTolerance
-				? singleLineHeight
-				: Math.min(contentHeight, 120);
+		const wasMultiline = multiline;
+		const maxTextareaHeight = singleRow
+			? singleRowMaxTextareaHeight
+			: defaultMaxTextareaHeight;
+		const contentWraps = contentHeight > singleLineHeight + singleLineTolerance;
+		const nextMultiline = singleRow
+			? textarea.value.length > 0 && (multiline || contentWraps)
+			: contentWraps;
+		const nextHeight = nextMultiline
+			? Math.min(
+					Math.max(contentHeight, singleRow ? multilineMinHeight : singleLineHeight),
+					maxTextareaHeight
+				)
+			: singleLineHeight;
+		multiline = nextMultiline;
+		textareaHeight = nextHeight;
+		if (nextMultiline !== wasMultiline) {
+			onMultilineChange?.(nextMultiline);
+		}
 		textarea.style.height = `${textareaHeight}px`;
-		textarea.style.overflowY = contentHeight > 120 ? 'auto' : 'hidden';
+		textarea.style.overflowY = contentHeight > maxTextareaHeight ? 'auto' : 'hidden';
 	}
 
 	async function submit(event: SubmitEvent) {
@@ -54,7 +85,14 @@
 		if (!value || disabled || streaming || value.length > 5_000) return;
 		onSubmit(value);
 		message = '';
+		if (hasDraft) {
+			hasDraft = false;
+			onDraftChange?.(false);
+		}
+		const wasMultiline = multiline;
+		multiline = false;
 		textareaHeight = singleLineHeight;
+		if (wasMultiline) onMultilineChange?.(false);
 		await tick();
 		if (textarea) {
 			textarea.style.height = `${singleLineHeight}px`;
@@ -76,7 +114,7 @@
 	}
 </script>
 
-<form class:multiline={textareaHeight > singleLineHeight} onsubmit={submit}>
+<form class={{ multiline, 'single-row': singleRow }} onsubmit={submit}>
 	<button
 		class="focus-target"
 		type="button"
@@ -141,6 +179,18 @@
 		cursor: text;
 	}
 
+	form.single-row {
+		max-height: 15.5rem;
+		grid-template-rows: minmax(2.5rem, auto);
+		padding: 0.35rem 0.45rem;
+	}
+
+	form.single-row.multiline {
+		grid-template-rows: minmax(1.875rem, auto) 2.5rem;
+		row-gap: 0.4rem;
+		padding: 0.55rem 0.45rem 0.4rem;
+	}
+
 	.focus-target {
 		position: absolute;
 		inset: 0;
@@ -178,6 +228,26 @@
 		scrollbar-width: thin;
 	}
 
+	form.single-row textarea {
+		width: 100%;
+		max-height: 11rem;
+		align-self: center;
+		grid-column: 1;
+		grid-row: 1;
+		margin-right: 0;
+		padding-block: 0.1125rem;
+		padding-right: 0.5rem;
+		padding-left: 0.7rem;
+	}
+
+	form.single-row.multiline textarea {
+		width: 100%;
+		align-self: start;
+		grid-column: 1 / -1;
+		grid-row: 1;
+		margin-right: 0;
+	}
+
 	.visual-placeholder {
 		position: absolute;
 		top: 1.05rem;
@@ -188,6 +258,12 @@
 		font-weight: 400;
 		line-height: 1.5;
 		pointer-events: none;
+	}
+
+	form.single-row .visual-placeholder {
+		top: 50%;
+		left: 1.15rem;
+		transform: translateY(-50%);
 	}
 
 	.submit-button {
@@ -214,6 +290,14 @@
 		justify-self: end;
 		background: var(--accent);
 		color: var(--button-foreground);
+	}
+
+	form.single-row .submit-button {
+		grid-row: 1;
+	}
+
+	form.single-row.multiline .submit-button {
+		grid-row: 2;
 	}
 
 	.submit-button:hover {

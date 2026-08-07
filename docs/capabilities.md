@@ -68,7 +68,8 @@ funktionalitet hör hemma i `product.md`.
 - De 25 senaste konversationssammanfattningarna förladdas på servern innan appytan visas.
 - Tomläget för en ny chatt visar de tre senaste konversationerna direkt under skrivfältet och
   låter användaren öppna dem utan att först gå till hela konversationslistan. Raderna visar
-  tid för dagens samtal, **Igår** för gårdagens och kort datum för äldre samtal.
+  tid för dagens samtal, **Igår** för gårdagens och kort datum för äldre samtal. Raderna tonas
+  bort när användaren börjar skriva och visas igen om utkastet töms.
 - Ytterligare 20 sammanfattningar hämtas när användaren närmar sig slutet av listan.
 - Listan grupperar samtal adaptivt under Idag, Igår, Den här veckan, Förra veckan och
   äldre månadsrubriker. Dagens och gårdagens rader visar tid, veckogrupper visar veckodag
@@ -94,6 +95,8 @@ funktionalitet hör hemma i `product.md`.
 ## Gränssnitt
 
 - Chatten visas i en responsiv panel med separata vyer för aktuell konversation och historik.
+- En ny chatt börjar med ett kompakt enkelradigt skrivfält. När texten radbryts får submit-knappen
+  en egen nedersta rad utan text, medan textytan ovanför fortsätter växa upp till sin maxhöjd.
 - Ljust och mörkt tema kan väljas i Inställningar och sparas lokalt i webbläsaren.
 - Laddning av konversationsmeddelanden respekterar `prefers-reduced-motion`.
 

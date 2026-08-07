@@ -30,6 +30,8 @@
 	}: { open: boolean; initialConversationPage: ConversationPage; onClose: () => void } = $props();
 	let fullscreen = $state(false);
 	let reducedMotion = $state(false);
+	let composerHasDraft = $state(false);
+	let composerMultiline = $state(false);
 	let messageScroller = $state<HTMLElement | null>(null);
 	const session = createChatSession({
 		initialConversationPage: untrack(() => initialConversationPage),
@@ -329,11 +331,18 @@
 							{/if}
 						</section>
 
-						<div class="composer-shell">
+						{#if !conversationActive}
+							<h2 class="new-conversation-title">Vad händer?</h2>
+						{/if}
+
+						<div class={['composer-shell', composerMultiline && 'multiline']}>
 							<ChatComposer
 								autoFocus
 								disabled={session.conversationLoading}
+								onDraftChange={(hasDraft) => (composerHasDraft = hasDraft)}
+								onMultilineChange={(multiline) => (composerMultiline = multiline)}
 								onSubmit={session.submit}
+								singleRow={!conversationActive}
 								streaming={session.streaming}
 								stoppable={session.canStopResponse}
 								onStop={session.stopResponse}
@@ -341,7 +350,12 @@
 						</div>
 
 						{#if !conversationActive && recentConversations.length > 0}
-							<nav class="recent-conversations" aria-label="Senaste konversationer">
+							<nav
+								class={['recent-conversations', composerHasDraft && 'draft-active']}
+								aria-label="Senaste konversationer"
+								aria-hidden={composerHasDraft}
+								inert={composerHasDraft}
+							>
 								<ul>
 									{#each recentConversations as conversation (conversation.id)}
 										<li>
@@ -452,13 +466,13 @@
 	.toolbar-end {
 		display: flex;
 		align-items: center;
-		gap: 0.25rem;
+		gap: 0;
 	}
 
 	.history-title {
 		margin: 0 0 0 0.65rem;
 		color: var(--text);
-		font-size: 1.53rem;
+		font-size: 1.4rem;
 		font-weight: 400;
 		line-height: 1.2;
 	}
@@ -491,22 +505,42 @@
 	}
 
 	.chat-view.new-conversation {
-		grid-template-rows: minmax(2rem, 0.42fr) auto auto minmax(2rem, 0.58fr);
+		grid-template-rows: minmax(2rem, 0.42fr) auto auto auto minmax(2rem, 0.58fr);
+	}
+
+	.new-conversation-title {
+		margin: 0 2rem 0.75rem;
+		color: var(--text);
+		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+		font-size: 1.4rem;
+		font-weight: 400;
+		line-height: 1.2;
+		text-align: center;
+		transform: translateY(-0.25rem);
 	}
 
 	.chat-view.new-conversation .composer-shell {
-		--composer-min-height: 7.5rem;
+		--composer-min-height: 3.2rem;
 
+		max-height: 15.5rem;
 		margin-inline: 2rem;
 		border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
-		border-radius: 1rem;
+		border-radius: 999px;
 		background: var(--background);
 		box-shadow: 0 0.75rem 2rem rgb(23 32 51 / 10%);
+	}
+
+	.chat-view.new-conversation .composer-shell.multiline {
+		border-radius: 1.25rem;
 	}
 
 	.recent-conversations {
 		min-width: 0;
 		margin: 0.65rem 2rem 0;
+	}
+
+	.recent-conversations.draft-active {
+		pointer-events: none;
 	}
 
 	.recent-conversations ul {
@@ -518,6 +552,32 @@
 		list-style: none;
 	}
 
+	.recent-conversations li {
+		--reveal-delay: 0ms;
+
+		opacity: 1;
+		transform: translateY(0);
+		transition:
+			opacity 320ms ease var(--reveal-delay),
+			transform 420ms cubic-bezier(0.22, 1, 0.36, 1) var(--reveal-delay);
+	}
+
+	.recent-conversations li:nth-child(2) {
+		--reveal-delay: 55ms;
+	}
+
+	.recent-conversations li:nth-child(3) {
+		--reveal-delay: 110ms;
+	}
+
+	.recent-conversations.draft-active li {
+		opacity: 0;
+		transform: translateY(0.3rem);
+		transition:
+			opacity 180ms ease,
+			transform 0ms linear 180ms;
+	}
+
 	.recent-conversations button {
 		display: grid;
 		width: 100%;
@@ -527,7 +587,7 @@
 		box-sizing: border-box;
 		border: 0;
 		border-radius: 0.5rem;
-		padding: 0.45rem 0.65rem;
+		padding: 0.85rem 1.15rem;
 		background: transparent;
 		color: color-mix(in srgb, var(--muted) 78%, transparent);
 		font-family: 'General Sans', ui-sans-serif, system-ui, sans-serif;
@@ -792,6 +852,12 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
+		.recent-conversations li,
+		.recent-conversations.draft-active li {
+			transform: none;
+			transition: none;
+		}
+
 		.formulating-status::after {
 			display: none;
 		}
