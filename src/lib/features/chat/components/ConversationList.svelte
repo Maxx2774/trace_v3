@@ -212,7 +212,6 @@
 			<Popover
 				open={conversation.id === openConversationMenuId}
 				placement="bottom-end"
-				size="sm"
 				role="menu"
 				width="max-content"
 				yOffset={-12}

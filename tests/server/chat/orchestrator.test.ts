@@ -3,8 +3,10 @@ import type {
 	ChatStreamEvent,
 	ConversationSummary
 } from '$lib/features/chat/contracts';
-import { orchestrateChatTurn } from '$lib/server/chat/orchestrator';
+import type { MealDuplicateInteractionV1 } from '$lib/features/meals/contracts';
+import { deriveNextAction, orchestrateChatTurn } from '$lib/server/chat/orchestrator';
 import { ProviderStepError } from '$lib/server/chat/provider';
+import { createToolCatalog } from '$lib/server/chat/tools/registry';
 import type { BeginChatTurnResult } from '$lib/server/chat/turns';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it, vi } from 'vitest';
@@ -45,6 +47,7 @@ describe('orchestrateChatTurn', () => {
 
 		const resultPromise = orchestrateChatTurn(turnInput(pendingBegin.promise, events), {
 			runModelStep: runner as never,
+			runResponseFinalizer: vi.fn(),
 			completeChatTurn: complete,
 			failChatTurn: vi.fn()
 		});
@@ -56,6 +59,36 @@ describe('orchestrateChatTurn', () => {
 
 		expect(complete).toHaveBeenCalledTimes(1);
 		expect(events.map((event) => event.type)).toEqual(['conversation', 'replace', 'done']);
+	});
+
+	it('requires an explicit first interaction decision when verified pending state exists', async () => {
+		const runner = vi.fn(async () => textStep('Fortsättningen styrs av modellkontraktet.'));
+		const events: ChatStreamEvent[] = [];
+		const input = turnInput(Promise.resolve(createdBegin()), events);
+
+		await orchestrateChatTurn(
+			{
+				...input,
+				toolCatalog: createToolCatalog({ hasPendingMealInteraction: true }),
+				interactionBindings: [
+					{
+						handle: 'pending_meal_1',
+						kind: 'meal_duplicate',
+						interactionId: '70000000-0000-4000-8000-000000000000'
+					}
+				]
+			},
+			{
+				runModelStep: runner as never,
+				runResponseFinalizer: vi.fn(),
+				completeChatTurn: vi.fn(async () => ({ message: assistantMessage, conversation })),
+				failChatTurn: vi.fn()
+			}
+		);
+
+		expect((runner.mock.calls as unknown[][])[0][5]).toMatchObject({
+			requiredToolName: 'resolve_registration'
+		});
 	});
 
 	it('uses the post-completion conversation in the canonical done event', async () => {
@@ -70,6 +103,7 @@ describe('orchestrateChatTurn', () => {
 			},
 			{
 				runModelStep: vi.fn(async () => textStep('Klart.')) as never,
+				runResponseFinalizer: vi.fn(),
 				completeChatTurn: vi.fn(async () => ({ message: assistantMessage, conversation })),
 				failChatTurn: vi.fn()
 			}
@@ -93,7 +127,10 @@ describe('orchestrateChatTurn', () => {
 			await new Promise((resolve) => setTimeout(resolve, index === 0 ? 15 : 1));
 			active -= 1;
 			const items = args.p_items as Array<{ name: string }>;
-			return { data: meal(index, items[0].name), error: null };
+			return {
+				data: { status: 'created', meal: meal(index, items[0].name), replayed: false },
+				error: null
+			};
 		});
 		const events: ChatStreamEvent[] = [];
 
@@ -105,6 +142,7 @@ describe('orchestrateChatTurn', () => {
 			{ ...turnInput(Promise.resolve(createdBegin()), events), client: { rpc } as never },
 			{
 				runModelStep: runner as never,
+				runResponseFinalizer: vi.fn(),
 				completeChatTurn: complete,
 				failChatTurn: vi.fn()
 			}
@@ -142,13 +180,17 @@ describe('orchestrateChatTurn', () => {
 		}));
 		const events: ChatStreamEvent[] = [];
 		const client = {
-			rpc: vi.fn(async () => ({ data: meal(0, 'Gröt'), error: null }))
+			rpc: vi.fn(async () => ({
+				data: { status: 'created', meal: meal(0, 'Gröt'), replayed: false },
+				error: null
+			}))
 		} as unknown as SupabaseClient;
 
 		await orchestrateChatTurn(
 			{ ...turnInput(Promise.resolve(createdBegin()), events), client },
 			{
 				runModelStep: runner as never,
+				runResponseFinalizer: vi.fn(),
 				completeChatTurn: complete,
 				failChatTurn: vi.fn()
 			}
@@ -160,6 +202,199 @@ describe('orchestrateChatTurn', () => {
 			expect.objectContaining({ content: 'Det är svårt att uppskatta utan mängder.' })
 		);
 		expect(events.some((event) => event.type === 'journal_record_created')).toBe(true);
+	});
+
+	it('uses one finalizer call for a duplicate without creating or projecting a meal', async () => {
+		const call = mealCall('call_1', 'Gröt');
+		const runner = vi.fn().mockResolvedValueOnce({
+			mode: 'tool',
+			text: '',
+			output: [call],
+			functionCalls: [call]
+		});
+		const finalizer = vi.fn(async () => ({
+			text: 'Det liknar gröten du redan registrerade. Vill du registrera en till?',
+			fulfilledObligationRefs: ['response_1']
+		}));
+		const complete = vi.fn(async (_client: SupabaseClient, input: { content: string }) => ({
+			message: { ...assistantMessage, content: input.content },
+			conversation
+		}));
+		const events: ChatStreamEvent[] = [];
+		const client = duplicateClient(duplicateInteraction());
+
+		const outcome = await orchestrateChatTurn(
+			{ ...turnInput(Promise.resolve(createdBegin()), events), client },
+			{
+				runModelStep: runner as never,
+				runResponseFinalizer: finalizer as never,
+				completeChatTurn: complete,
+				failChatTurn: vi.fn()
+			}
+		);
+
+		expect(outcome).toMatchObject({ status: 'succeeded', records: [] });
+		expect(runner).toHaveBeenCalledTimes(1);
+		expect(finalizer).toHaveBeenCalledWith(
+			expect.objectContaining({
+				canonicalParts: [],
+				responseObligations: [
+					expect.objectContaining({
+						ref: 'response_1',
+						confirmationRef: 'pending_meal_1'
+					})
+				]
+			}),
+			expect.any(String),
+			expect.any(AbortSignal)
+		);
+		expect(events.some((event) => event.type === 'journal_record_created')).toBe(false);
+		expect(events.map((event) => event.type)).toEqual(['conversation', 'replace', 'done']);
+	});
+
+	it('finalizes a mixed created and duplicate batch with only the created record', async () => {
+		const calls = [mealCall('call_1', 'Kaffe'), mealCall('call_2', 'Gröt')];
+		const runner = vi.fn().mockResolvedValueOnce({
+			mode: 'tool',
+			text: '',
+			output: calls,
+			functionCalls: calls
+		});
+		const interaction = duplicateInteraction({ proposalOperationId: `${userMessage.turnId}:1` });
+		const rpc = vi.fn(async (_name: string, args: Record<string, unknown>) =>
+			args.p_operation_index === 0
+				? {
+						data: { status: 'created', meal: meal(0, 'Kaffe'), replayed: false },
+						error: null
+					}
+				: {
+						data: { status: 'confirmation_required', interaction, replayed: false },
+						error: null
+					}
+		);
+		const finalizer = vi.fn(async () => ({
+			text: 'Kaffet är registrerat. Gröten liknar en tidigare måltid – vill du registrera den också?',
+			fulfilledObligationRefs: ['response_2']
+		}));
+		const events: ChatStreamEvent[] = [];
+
+		const outcome = await orchestrateChatTurn(
+			{
+				...turnInput(Promise.resolve(createdBegin()), events),
+				client: { rpc } as unknown as SupabaseClient
+			},
+			{
+				runModelStep: runner as never,
+				runResponseFinalizer: finalizer as never,
+				completeChatTurn: vi.fn(async (_client, input) => ({
+					message: { ...assistantMessage, content: input.content },
+					conversation
+				})),
+				failChatTurn: vi.fn()
+			}
+		);
+
+		expect(outcome.records.map((record) => record.value.items[0].name)).toEqual(['Kaffe']);
+		expect(finalizer).toHaveBeenCalledWith(
+			expect.objectContaining({
+				canonicalParts: expect.arrayContaining([
+					expect.objectContaining({ kind: 'text', text: 'Registrerat' }),
+					expect.objectContaining({ kind: 'journal_record' })
+				]),
+				responseObligations: [expect.objectContaining({ ref: 'response_2' })]
+			}),
+			expect.any(String),
+			expect.any(AbortSignal)
+		);
+		expect(events.filter((event) => event.type === 'journal_record_created')).toHaveLength(1);
+	});
+
+	it('lets the full agent continue when a duplicate registration also needs an answer', async () => {
+		const call = mealCall('call_1', 'Gröt', true);
+		const runner = vi
+			.fn()
+			.mockResolvedValueOnce({ mode: 'tool', text: '', output: [call], functionCalls: [call] })
+			.mockResolvedValueOnce(
+				textStep(
+					'Det liknar din tidigare gröt. Vill du registrera en till? Proteinmängden går inte att uppskatta utan mängder.',
+					['response_1']
+				)
+			);
+		const finalizer = vi.fn();
+		const events: ChatStreamEvent[] = [];
+
+		await orchestrateChatTurn(
+			{
+				...turnInput(Promise.resolve(createdBegin()), events),
+				client: duplicateClient(duplicateInteraction())
+			},
+			{
+				runModelStep: runner as never,
+				runResponseFinalizer: finalizer,
+				completeChatTurn: vi.fn(async (_client, input) => ({
+					message: { ...assistantMessage, content: input.content },
+					conversation
+				})),
+				failChatTurn: vi.fn()
+			}
+		);
+
+		expect(runner).toHaveBeenCalledTimes(2);
+		expect(runner.mock.calls[1][5]).toMatchObject({ obligationRefs: ['response_1'] });
+		expect(finalizer).not.toHaveBeenCalled();
+	});
+
+	it('recovers a durable prepared duplicate without replaying its mutation', async () => {
+		const interaction = duplicateInteraction();
+		const finalizer = vi.fn(async () => ({
+			text: 'Det ser ut som en dubblett. Vill du registrera den ändå?',
+			fulfilledObligationRefs: ['response_1']
+		}));
+		const rpc = vi.fn();
+		const events: ChatStreamEvent[] = [];
+
+		await orchestrateChatTurn(
+			{
+				...turnInput(Promise.resolve(resumedBegin([interaction])), events),
+				client: { rpc } as unknown as SupabaseClient
+			},
+			{
+				runModelStep: vi.fn(async () => textStep('ignoreras')) as never,
+				runResponseFinalizer: finalizer as never,
+				completeChatTurn: vi.fn(async (_client, input) => ({
+					message: { ...assistantMessage, content: input.content },
+					conversation
+				})),
+				failChatTurn: vi.fn()
+			}
+		);
+
+		expect(rpc).not.toHaveBeenCalled();
+		expect(finalizer).toHaveBeenCalledTimes(1);
+		expect(events.map((event) => event.type)).toEqual(['conversation', 'replace', 'done']);
+	});
+
+	it('prioritizes continuation over obligations and obligations over deterministic completion', () => {
+		expect(
+			deriveNextAction([
+				{
+					requiresAgentContinuation: false,
+					canonicalParts: [],
+					responseObligations: [{} as never]
+				},
+				{ requiresAgentContinuation: true, canonicalParts: [], responseObligations: [] }
+			])
+		).toBe('continue');
+		expect(
+			deriveNextAction([
+				{ requiresAgentContinuation: false, canonicalParts: [], responseObligations: [{} as never] }
+			])
+		).toBe('respond');
+		expect(
+			deriveNextAction([
+				{ requiresAgentContinuation: false, canonicalParts: [], responseObligations: [] }
+			])
+		).toBe('complete');
 	});
 
 	it('keeps a created record when a correctable sibling call is followed by a model failure', async () => {
@@ -177,13 +412,17 @@ describe('orchestrateChatTurn', () => {
 		const events: ChatStreamEvent[] = [];
 		const fail = vi.fn(async () => {});
 		const client = {
-			rpc: vi.fn(async () => ({ data: meal(0, 'Gröt'), error: null }))
+			rpc: vi.fn(async () => ({
+				data: { status: 'created', meal: meal(0, 'Gröt'), replayed: false },
+				error: null
+			}))
 		} as unknown as SupabaseClient;
 
 		const outcome = await orchestrateChatTurn(
 			{ ...turnInput(Promise.resolve(createdBegin()), events), client },
 			{
 				runModelStep: runner as never,
+				runResponseFinalizer: vi.fn(),
 				completeChatTurn: vi.fn(),
 				failChatTurn: fail
 			}
@@ -206,6 +445,9 @@ function turnInput(beginPromise: Promise<BeginChatTurnResult>, events: ChatStrea
 		turnId: userMessage.turnId,
 		timezone: 'Europe/Stockholm',
 		modelInput: [{ role: 'user' as const, content: userMessage.content }],
+		toolCatalog: createToolCatalog({ hasPendingMealInteraction: false }),
+		interactionBindings: [],
+		userMessage: userMessage.content,
 		beginPromise,
 		signal: new AbortController().signal,
 		emit: (event: ChatStreamEvent) => events.push(event)
@@ -218,16 +460,18 @@ function createdBegin(): Extract<BeginChatTurnResult, { status: 'created' }> {
 		conversation,
 		message: userMessage,
 		leaseExpiresAt: '2026-08-06T10:02:00.000Z',
-		journalRecords: []
+		journalRecords: [],
+		interactions: []
 	};
 }
 
-function textStep(text: string) {
+function textStep(text: string, fulfilledObligationRefs: string[] = []) {
 	return {
 		mode: 'text' as const,
 		text,
 		output: [{ type: 'message', content: [{ type: 'output_text', text }] }],
-		functionCalls: []
+		functionCalls: [],
+		fulfilledObligationRefs
 	};
 }
 
@@ -258,6 +502,72 @@ function meal(index: number, description: string) {
 			}
 		]
 	});
+}
+
+function duplicateClient(interaction: MealDuplicateInteractionV1): SupabaseClient {
+	return {
+		rpc: vi.fn(async () => ({
+			data: { status: 'confirmation_required', interaction, replayed: false },
+			error: null
+		}))
+	} as unknown as SupabaseClient;
+}
+
+function duplicateInteraction(
+	overrides: Partial<MealDuplicateInteractionV1> = {}
+): MealDuplicateInteractionV1 {
+	const proposedMeal = {
+		mealType: 'breakfast' as const,
+		occurrence: {
+			precision: 'date' as const,
+			occurredAt: null,
+			occurredOn: '2026-08-06',
+			timezone: 'Europe/Stockholm',
+			timePeriod: null
+		},
+		items: [{ name: 'Gröt', amountText: null, ingredients: [] }]
+	};
+	return {
+		id: '70000000-0000-4000-8000-000000000000',
+		kind: 'meal_duplicate',
+		status: 'prepared',
+		schemaVersion: 1,
+		policyVersion: 1,
+		proposalTurnId: userMessage.turnId,
+		proposalOperationId: `${userMessage.turnId}:0`,
+		proposalInputHash: 'duplicate-input-hash',
+		resolutionTurnId: null,
+		resolutionOperationId: null,
+		resolutionReason: null,
+		payload: {
+			proposedMeal,
+			existingMealSnapshot: proposedMeal,
+			matchDetails: {
+				policyVersion: 1,
+				anchor: 'identical_payload',
+				timeDifferenceMinutes: null,
+				candidateCount: 1,
+				differences: { mealType: 'match', amounts: 'match', ingredients: 'match' }
+			}
+		},
+		createdAt: '2026-08-06T10:00:00.000Z',
+		activatedAt: null,
+		resolvedAt: null,
+		...overrides
+	};
+}
+
+function resumedBegin(
+	interactions: MealDuplicateInteractionV1[]
+): Extract<BeginChatTurnResult, { status: 'resumed' }> {
+	return {
+		status: 'resumed',
+		conversation,
+		message: userMessage,
+		leaseExpiresAt: '2026-08-06T10:02:00.000Z',
+		journalRecords: [],
+		interactions
+	};
 }
 
 function deferred<T>() {

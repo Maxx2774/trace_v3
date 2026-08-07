@@ -5,6 +5,7 @@ import type {
 } from '$lib/features/chat/contracts';
 import { createChatResponseStream } from '$lib/server/chat/stream';
 import type { BeginChatTurnResult } from '$lib/server/chat/turns';
+import { createToolCatalog } from '$lib/server/chat/tools/registry';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -30,7 +31,8 @@ const beginResult: BeginChatTurnResult = {
 	conversation,
 	message: userMessage,
 	leaseExpiresAt: '2026-08-06T10:02:00.000Z',
-	journalRecords: []
+	journalRecords: [],
+	interactions: []
 };
 
 describe('createChatResponseStream', () => {
@@ -55,6 +57,8 @@ describe('createChatResponseStream', () => {
 				adminClient: {} as SupabaseClient,
 				beginPromise: Promise.resolve(beginResult),
 				modelInput: [{ role: 'user', content: userMessage.content }],
+				toolCatalog: createToolCatalog({ hasPendingMealInteraction: false }),
+				interactionBindings: [],
 				userId: '40000000-0000-4000-8000-000000000000',
 				turnId: userMessage.turnId,
 				timezone: 'Europe/Stockholm',

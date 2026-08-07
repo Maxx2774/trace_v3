@@ -1,12 +1,15 @@
 import type OpenAI from 'openai';
 import type { Response as OpenAIResponse } from 'openai/resources/responses/responses';
 import { createModelStream } from './model';
+import { parseFinalizerOutput } from './response-contract';
+import type { ToolCatalog } from './tools/registry';
 
 export type ModelStep = {
 	mode: 'text' | 'tool';
 	text: string;
 	output: OpenAI.Responses.ResponseOutputItem[];
 	functionCalls: OpenAI.Responses.ResponseFunctionToolCall[];
+	fulfilledObligationRefs: string[];
 };
 
 export class ProviderStepError extends Error {
@@ -25,9 +28,11 @@ export async function runModelStep(
 	userId: string,
 	signal: AbortSignal,
 	onTextDelta: (delta: string) => void,
-	createStream: typeof createModelStream = createModelStream
+	createStream: typeof createModelStream = createModelStream,
+	options?: { toolCatalog: ToolCatalog; obligationRefs?: string[]; requiredToolName?: string }
 ): Promise<ModelStep> {
-	const stream = await createStream(input, userId, signal);
+	if (!options) throw new Error('Toolkatalog saknas för modellsteget.');
+	const stream = await createStream(input, userId, signal, options);
 	let mode: 'undecided' | 'text' | 'tool' = 'undecided';
 	let completed: OpenAIResponse | null = null;
 	let streamedText = '';
@@ -55,7 +60,7 @@ export async function runModelStep(
 			}
 		} else if (event.type === 'response.output_text.delta') {
 			streamedText += event.delta;
-			if (mode === 'text') onTextDelta(event.delta);
+			if (mode === 'text' && !options.obligationRefs?.length) onTextDelta(event.delta);
 		} else if (event.type === 'response.completed') {
 			completed = event.response;
 		} else if (event.type === 'response.failed' || event.type === 'error') {
@@ -73,7 +78,7 @@ export async function runModelStep(
 		(item): item is OpenAI.Responses.ResponseFunctionToolCall => item.type === 'function_call'
 	);
 	const messageItems = completed.output.filter((item) => item.type === 'message');
-	const canonicalText = extractCompletedOutputText(completed).trim();
+	const rawText = extractCompletedOutputText(completed).trim();
 	const hasToolItems = completed.output.some((item) => isToolItem(item.type));
 
 	if (messageAppearedFirst && hasToolItems) {
@@ -91,14 +96,21 @@ export async function runModelStep(
 		);
 	}
 
-	if (functionCalls.length === 0 && !canonicalText) {
+	if (functionCalls.length === 0 && !rawText) {
 		throw new ProviderStepError('empty_response', 'Svaret innehöll ingen text.', true);
 	}
 
 	const finalMode = functionCalls.length > 0 || hasToolItems ? 'tool' : 'text';
+	let canonicalText = rawText;
+	let fulfilledObligationRefs: string[] = [];
+	if (finalMode === 'text' && options.obligationRefs?.length) {
+		const parsed = parseFinalizerOutput(rawText, options.obligationRefs);
+		canonicalText = parsed.text;
+		fulfilledObligationRefs = parsed.fulfilledObligationRefs;
+	}
 	if (finalMode === 'tool' && functionCalls.length === 0 && canonicalText) {
 		onTextDelta(canonicalText);
-	} else if (finalMode === 'text' && streamedText !== canonicalText) {
+	} else if (finalMode === 'text' && streamedText !== rawText) {
 		// The orchestrator emits a canonical replace event after the step.
 	}
 
@@ -106,7 +118,8 @@ export async function runModelStep(
 		mode: finalMode,
 		text: canonicalText,
 		output: completed.output,
-		functionCalls
+		functionCalls,
+		fulfilledObligationRefs
 	};
 }
 

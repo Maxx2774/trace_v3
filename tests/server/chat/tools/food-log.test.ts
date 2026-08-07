@@ -1,6 +1,11 @@
 import { foodLogRecordSchema, foodLogRecordTool } from '$lib/server/chat/tools/food-log';
+import {
+	foodLogResolveRegistrationSchema,
+	foodLogResolveRegistrationTool
+} from '$lib/server/chat/tools/food-log-confirmation';
+import { createToolCatalog } from '$lib/server/chat/tools/registry';
 import { safeParse } from 'valibot';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const base = {
 	responseRequired: false,
@@ -28,6 +33,91 @@ describe('food_log.record', () => {
 			name: 'record',
 			defer_loading: true,
 			strict: true
+		});
+	});
+
+	it('exposes resolution only when verified pending state exists', () => {
+		const withoutPending = createToolCatalog({ hasPendingMealInteraction: false });
+		const withPending = createToolCatalog({ hasPendingMealInteraction: true });
+		expect(withoutPending.allowedKeys.has('food_log.resolve_registration')).toBe(false);
+		expect(withPending.allowedKeys.has('food_log.resolve_registration')).toBe(true);
+		expect(withPending.namespaces[0].tools.map((tool) => tool.name)).toEqual(['record']);
+		expect(withPending.directTools.map((tool) => tool.name)).toEqual(['resolve_registration']);
+		expect(withPending.directTools[0]).not.toHaveProperty('defer_loading');
+		expect(withPending.directToolKeyByName.get('resolve_registration')).toBe(
+			'food_log.resolve_registration'
+		);
+		expect(withPending.namespaces[0].description).toContain(
+			'Endast confirmation_required från verktyget'
+		);
+	});
+
+	it('uses an OpenAI-compatible strict object schema for resolution', () => {
+		expect(foodLogResolveRegistrationTool.definition.parameters).toMatchObject({
+			type: 'object',
+			additionalProperties: false,
+			required: ['confirmationRef', 'decision', 'reason', 'responseRequired']
+		});
+		expect(
+			safeParse(foodLogResolveRegistrationSchema, {
+				confirmationRef: 'pending_meal_1',
+				decision: 'register',
+				reason: null,
+				responseRequired: false
+			}).success
+		).toBe(true);
+		expect(
+			safeParse(foodLogResolveRegistrationSchema, {
+				confirmationRef: 'pending_meal_1',
+				decision: 'discard',
+				reason: null,
+				responseRequired: false
+			}).success
+		).toBe(false);
+		expect(
+			safeParse(foodLogResolveRegistrationSchema, {
+				confirmationRef: 'pending_meal_1',
+				decision: 'leave_pending',
+				reason: 'interaction_followup',
+				responseRequired: true
+			}).success
+		).toBe(true);
+	});
+
+	it('leaves a follow-up pending without touching the database', async () => {
+		const rpc = vi.fn();
+		const result = await foodLogResolveRegistrationTool.execute(
+			{
+				client: { rpc } as never,
+				userId: 'user-id',
+				turnId: 'turn-id',
+				leaseExpiresAt: '2026-08-07T10:02:00.000Z',
+				operationIndex: 0,
+				timezone: 'Europe/Stockholm',
+				interactionBindings: [
+					{
+						handle: 'pending_meal_1',
+						kind: 'meal_duplicate',
+						interactionId: 'interaction-id'
+					}
+				]
+			},
+			{
+				confirmationRef: 'pending_meal_1',
+				decision: 'leave_pending',
+				reason: 'interaction_followup',
+				responseRequired: true
+			} as never
+		);
+
+		expect(rpc).not.toHaveBeenCalled();
+		expect(result).toEqual({
+			output: { status: 'pending', reason: 'interaction_followup' },
+			effects: {
+				requiresAgentContinuation: true,
+				canonicalParts: [],
+				responseObligations: []
+			}
 		});
 	});
 

@@ -177,7 +177,7 @@ export const foodLogRecordTool = {
 				context.timezone
 			)
 		};
-		const meal = await createMealFromChat(context.client, {
+		const result = await createMealFromChat(context.client, {
 			userId: context.userId,
 			turnId: context.turnId,
 			leaseExpiresAt: context.leaseExpiresAt,
@@ -185,13 +185,56 @@ export const foodLogRecordTool = {
 			meal: mealInput
 		});
 
+		if (result.status === 'confirmation_required') {
+			const confirmationRef = `pending_meal_${context.interactionBindings.length + context.operationIndex + 1}`;
+			const obligationRef = `response_${context.operationIndex + 1}`;
+			return {
+				output: {
+					status: 'confirmation_required',
+					confirmationRef,
+					mealCreated: false,
+					requiredAction: 'ask_for_confirmation',
+					obligationRef,
+					proposedMeal: result.interaction.payload.proposedMeal,
+					existingMeal: result.interaction.payload.existingMealSnapshot,
+					match: result.interaction.payload.matchDetails
+				},
+				effects: {
+					requiresAgentContinuation: input.responseRequired,
+					canonicalParts: [],
+					responseObligations: [
+						{
+							ref: obligationRef,
+							kind: 'ask_meal_duplicate_confirmation' as const,
+							schemaVersion: 1 as const,
+							confirmationRef,
+							proposedMeal: result.interaction.payload.proposedMeal,
+							existingMeal: result.interaction.payload.existingMealSnapshot,
+							match: result.interaction.payload.matchDetails
+						}
+					]
+				}
+			};
+		}
+
+		const record = {
+			kind: 'meal' as const,
+			reference: {
+				type: 'meal' as const,
+				recordId: result.meal.id,
+				committedRevision: result.meal.revision
+			},
+			value: result.meal
+		};
 		return {
-			output: { status: 'created', meal },
-			continueModel: input.responseRequired,
-			record: {
-				kind: 'meal' as const,
-				reference: { type: 'meal' as const, recordId: meal.id, committedRevision: meal.revision },
-				value: meal
+			output: { status: 'created', meal: result.meal },
+			effects: {
+				requiresAgentContinuation: input.responseRequired,
+				canonicalParts: [
+					{ kind: 'text' as const, text: 'Registrerat' },
+					{ kind: 'journal_record' as const, record }
+				],
+				responseObligations: []
 			}
 		};
 	}

@@ -165,7 +165,7 @@
 	}
 
 	nav a {
-		--icon-size: 1.5rem;
+		--icon-size: 1.25rem;
 		display: flex;
 		height: 2.5rem;
 		min-width: 0;
@@ -176,7 +176,7 @@
 		border-radius: 0.7rem;
 		padding: 0.65rem;
 		color: var(--text);
-		font-size: 1.1rem;
+		font-size: 1rem;
 		font-weight: 400;
 		text-decoration: none;
 		transition: background 150ms ease;

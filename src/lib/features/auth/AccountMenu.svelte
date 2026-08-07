@@ -9,7 +9,7 @@
 	let { displayName }: { displayName: string } = $props();
 </script>
 
-<Popover placement="top-start" size="md" role="menu" width="15.5rem" fullWidth>
+<Popover placement="top-start" role="menu" width="15.5rem" fullWidth>
 	{#snippet trigger(open, toggle)}
 		<button
 			class={['account-trigger', open && 'open']}
@@ -67,7 +67,7 @@
 	}
 
 	.avatar {
-		--icon-size: 1.5rem;
+		--icon-size: 1.25rem;
 		display: inline-grid;
 		width: 2rem;
 		height: 2rem;
@@ -77,7 +77,7 @@
 
 	strong {
 		overflow: hidden;
-		font-size: 1.1rem;
+		font-size: 1rem;
 		font-weight: 400;
 		text-align: left;
 		text-overflow: ellipsis;

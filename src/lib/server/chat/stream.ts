@@ -5,6 +5,8 @@ import { replaceProvisionalConversationTitle } from './conversations';
 import { orchestrateChatTurn } from './orchestrator';
 import { generateConversationTitle } from './title';
 import type { BeginChatTurnResult } from './turns';
+import type { PendingInteractionBinding } from './interactions';
+import type { ToolCatalog } from './tools/registry';
 
 const encoder = new TextEncoder();
 
@@ -13,6 +15,8 @@ export function createChatResponseStream(
 		adminClient: SupabaseClient;
 		beginPromise: Promise<BeginChatTurnResult>;
 		modelInput: OpenAI.Responses.ResponseInput;
+		toolCatalog: ToolCatalog;
+		interactionBindings: PendingInteractionBinding[];
 		userId: string;
 		turnId: string;
 		timezone: string;
@@ -55,6 +59,9 @@ export function createChatResponseStream(
 					turnId: input.turnId,
 					timezone: input.timezone,
 					modelInput: input.modelInput,
+					toolCatalog: input.toolCatalog,
+					interactionBindings: input.interactionBindings,
+					userMessage: input.userMessage,
 					beginPromise: input.beginPromise,
 					signal: controller.signal,
 					emit,

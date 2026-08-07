@@ -1,6 +1,8 @@
 import type { ChatMessage, ConversationSummary } from '$lib/features/chat/contracts';
 import type { TurnJournalRecord } from '$lib/features/journal/contracts';
+import type { MealDuplicateInteractionV1 } from '$lib/features/meals/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { listTurnMealDuplicateInteractions } from './interactions';
 
 export type BeginChatTurnResult =
 	| {
@@ -9,6 +11,7 @@ export type BeginChatTurnResult =
 			message: ChatMessage;
 			leaseExpiresAt: string;
 			journalRecords: TurnJournalRecord[];
+			interactions: MealDuplicateInteractionV1[];
 	  }
 	| {
 			status: 'resumed';
@@ -16,6 +19,7 @@ export type BeginChatTurnResult =
 			message: ChatMessage;
 			leaseExpiresAt: string;
 			journalRecords: TurnJournalRecord[];
+			interactions: MealDuplicateInteractionV1[];
 	  }
 	| {
 			status: 'completed';
@@ -53,7 +57,17 @@ export async function beginChatTurn(
 	});
 
 	if (error) throw error;
-	return data as BeginChatTurnResult;
+	const result = data as BeginChatTurnResult;
+	if (result.status === 'created') return { ...result, interactions: [] };
+	if (result.status === 'resumed') {
+		const interactions = await listTurnMealDuplicateInteractions(
+			client,
+			input.userId,
+			input.turnId
+		);
+		return { ...result, interactions };
+	}
+	return result;
 }
 
 export async function completeChatTurn(

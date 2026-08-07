@@ -75,6 +75,8 @@ begin
 			]}
 		]'::jsonb
 	);
+	assert v_result ->> 'status' = 'created', 'first operation must create a meal';
+	v_result := v_result -> 'meal';
 	v_meal_id := (v_result ->> 'id')::uuid;
 	v_item_id := (v_result #>> '{items,1,id}')::uuid;
 	v_ingredient_id := (v_result #>> '{items,1,ingredients,0,id}')::uuid;
@@ -113,7 +115,9 @@ begin
 			]}
 		]'::jsonb
 	);
-	assert v_repeat = v_result, 'same operation and payload must replay the same record';
+	assert v_repeat ->> 'status' = 'created', 'same operation must replay a created outcome';
+	assert v_repeat -> 'meal' = v_result, 'same operation and payload must replay the same record';
+	assert (v_repeat ->> 'replayed')::boolean, 'same operation must be marked replayed';
 	assert (select count(*) from public.meals where source_turn_id = v_turn_id) = 1,
 		'idempotent create retry must not duplicate the meal';
 
@@ -158,6 +162,7 @@ begin
 		null,
 		'[{"name":"Kaffe","amountText":"1 kopp","ingredients":[]}]'::jsonb
 	);
+	v_result := v_result -> 'meal';
 	v_other_meal_id := (v_result ->> 'id')::uuid;
 
 	v_result := public.update_meal(
@@ -435,6 +440,227 @@ begin
 	), 'account deletion must not leave nested ingredient rows';
 
 	delete from public.conversations where id = v_other_conversation_id;
+end;
+$$;
+
+do $$
+declare
+	v_user_id uuid := 'b3000000-0000-4000-8000-000000000000';
+	v_other_user_id uuid := 'b4000000-0000-4000-8000-000000000000';
+	v_turn_a uuid := gen_random_uuid();
+	v_turn_b uuid := gen_random_uuid();
+	v_turn_c uuid := gen_random_uuid();
+	v_turn_d uuid := gen_random_uuid();
+	v_turn_e uuid := gen_random_uuid();
+	v_other_turn uuid := gen_random_uuid();
+	v_conversation_id uuid;
+	v_other_conversation_id uuid;
+	v_lease timestamptz;
+	v_other_lease timestamptz;
+	v_interaction_id uuid;
+	v_second_interaction_id uuid;
+	v_result jsonb;
+	v_replay jsonb;
+begin
+	insert into auth.users (
+		id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+	)
+	values
+		(
+			v_user_id,
+			'00000000-0000-0000-0000-000000000000',
+			'authenticated',
+			'authenticated',
+			'meal-duplicate-1@example.invalid',
+			'{}'::jsonb,
+			'{}'::jsonb,
+			now(),
+			now()
+		),
+		(
+			v_other_user_id,
+			'00000000-0000-0000-0000-000000000000',
+			'authenticated',
+			'authenticated',
+			'meal-duplicate-2@example.invalid',
+			'{}'::jsonb,
+			'{}'::jsonb,
+			now(),
+			now()
+		);
+
+	v_result := public.begin_chat_turn(
+		v_user_id, null, v_turn_a, 'Jag åt havregröt i lördags', 120
+	);
+	v_conversation_id := (v_result #>> '{conversation,id}')::uuid;
+	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_result := public.create_meal_from_chat(
+		v_user_id,
+		v_turn_a,
+		v_lease,
+		0,
+		'breakfast',
+		'date',
+		null,
+		'2026-08-01',
+		'Europe/Stockholm',
+		null,
+		'[{"name":"Havre  gröt","amountText":"1 skål","ingredients":[]}]'::jsonb
+	);
+	assert v_result ->> 'status' = 'created', 'first historical meal must be created';
+	perform public.complete_chat_turn(v_user_id, v_turn_a, v_lease, 'Registrerat');
+
+	v_result := public.begin_chat_turn(
+		v_user_id, v_conversation_id, v_turn_b, 'Jag åt havregröt i lördags', 120
+	);
+	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_result := public.create_meal_from_chat(
+		v_user_id,
+		v_turn_b,
+		v_lease,
+		0,
+		'breakfast',
+		'date',
+		null,
+		'2026-08-01',
+		'Europe/Stockholm',
+		null,
+		'[{"name":"havre gröt","amountText":"1 skål","ingredients":[]}]'::jsonb
+	);
+	assert v_result ->> 'status' = 'confirmation_required',
+		'an identical historical date-only meal must require confirmation';
+	v_interaction_id := (v_result #>> '{interaction,id}')::uuid;
+	assert v_result #>> '{interaction,status}' = 'prepared',
+		'interaction must remain prepared before the question commits';
+	assert (select count(*) from public.meals where user_id = v_user_id) = 1,
+		'duplicate proposal must not create a second meal';
+
+	v_replay := public.create_meal_from_chat(
+		v_user_id,
+		v_turn_b,
+		v_lease,
+		0,
+		'breakfast',
+		'date',
+		null,
+		'2026-08-01',
+		'Europe/Stockholm',
+		null,
+		'[{"name":"havre gröt","amountText":"1 skål","ingredients":[]}]'::jsonb
+	);
+	assert (v_replay #>> '{interaction,id}')::uuid = v_interaction_id,
+		'same proposal operation must replay the same interaction';
+	assert (v_replay ->> 'replayed')::boolean,
+		'replayed interaction outcome must be explicit';
+
+	perform public.fail_chat_turn(v_user_id, v_turn_b, v_lease, true);
+	v_result := public.begin_chat_turn(
+		v_user_id, v_conversation_id, v_turn_b, 'Jag åt havregröt i lördags', 120
+	);
+	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	assert (
+		select status = 'prepared' and prompt_message_id is null
+		from public.pending_interactions where id = v_interaction_id
+	), 'retry before finalizer commit must keep the interaction non-answerable';
+	perform public.complete_chat_turn(
+		v_user_id,
+		v_turn_b,
+		v_lease,
+		'Du har redan registrerat havregröt i lördags. Vill du registrera en till?'
+	);
+	assert (
+		select status = 'pending' and prompt_message_id is not null and activated_at is not null
+		from public.pending_interactions where id = v_interaction_id
+	), 'assistant commit must activate the interaction atomically';
+
+	v_result := public.begin_chat_turn(v_user_id, v_conversation_id, v_turn_c, 'Ja', 120);
+	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_result := public.resolve_meal_duplicate_interaction(
+		v_user_id, v_turn_c, v_lease, 0, v_interaction_id, 'register', null
+	);
+	assert v_result ->> 'status' = 'registered', 'explicit confirmation must create the meal';
+	assert (select count(*) from public.meals where user_id = v_user_id) = 2,
+		'confirmation must create exactly one additional meal';
+	v_replay := public.resolve_meal_duplicate_interaction(
+		v_user_id, v_turn_c, v_lease, 0, v_interaction_id, 'register', null
+	);
+	assert v_replay ->> 'status' = 'registered' and (v_replay ->> 'replayed')::boolean,
+		'resolution retry must replay the same registered meal';
+	perform public.complete_chat_turn(v_user_id, v_turn_c, v_lease, 'Registrerat');
+
+	v_result := public.begin_chat_turn(
+		v_user_id, v_conversation_id, v_turn_d, 'Jag åt havregröt i lördags igen', 120
+	);
+	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_result := public.create_meal_from_chat(
+		v_user_id,
+		v_turn_d,
+		v_lease,
+		0,
+		'breakfast',
+		'date',
+		null,
+		'2026-08-01',
+		'Europe/Stockholm',
+		null,
+		'[{"name":"Havre gröt","amountText":"1 skål","ingredients":[]}]'::jsonb
+	);
+	v_second_interaction_id := (v_result #>> '{interaction,id}')::uuid;
+	assert (v_result #>> '{interaction,payload,matchDetails,candidateCount}')::integer = 2,
+		'multiple candidates must be represented without creating records';
+	perform public.complete_chat_turn(
+		v_user_id, v_turn_d, v_lease, 'Vill du registrera ytterligare en havregröt?'
+	);
+
+	v_result := public.begin_chat_turn(v_user_id, v_conversation_id, v_turn_e, 'Nej', 120);
+	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_result := public.resolve_meal_duplicate_interaction(
+		v_user_id,
+		v_turn_e,
+		v_lease,
+		0,
+		v_second_interaction_id,
+		'discard',
+		'user_declined'
+	);
+	assert v_result ->> 'status' = 'discarded', 'decline must discard the interaction';
+	assert (select count(*) from public.meals where user_id = v_user_id) = 2,
+		'discard must not create a meal';
+	perform public.complete_chat_turn(v_user_id, v_turn_e, v_lease, 'Okej.');
+
+	v_result := public.begin_chat_turn(
+		v_other_user_id, null, v_other_turn, 'Försök lösa någon annans måltid', 120
+	);
+	v_other_conversation_id := (v_result #>> '{conversation,id}')::uuid;
+	v_other_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_result := public.resolve_meal_duplicate_interaction(
+		v_other_user_id,
+		v_other_turn,
+		v_other_lease,
+		0,
+		v_second_interaction_id,
+		'discard',
+		'user_declined'
+	);
+	assert v_result ->> 'status' = 'not_found',
+		'another owner must not resolve the interaction';
+	perform public.complete_chat_turn(v_other_user_id, v_other_turn, v_other_lease, 'Kunde inte lösas.');
+
+	assert not has_table_privilege('authenticated', 'public.pending_interactions', 'select'),
+		'pending interaction state must remain server-only';
+	assert not has_function_privilege(
+		'authenticated',
+		'public.resolve_meal_duplicate_interaction(uuid,uuid,timestamptz,integer,uuid,text,text)',
+		'execute'
+	), 'authenticated must not execute interaction resolution';
+	assert exists (
+		select 1 from pg_indexes
+		where schemaname = 'public'
+			and indexname = 'pending_interactions_pending_conversation_idx'
+	), 'pending interaction lookup must use a partial index';
+
+	delete from public.conversations where id in (v_conversation_id, v_other_conversation_id);
+	delete from auth.users where id in (v_user_id, v_other_user_id);
 end;
 $$;
 

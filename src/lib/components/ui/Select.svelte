@@ -71,7 +71,8 @@
 		if (event.key === 'Home' || event.key === 'End') {
 			if (!open) return;
 			event.preventDefault();
-			activeIndex = event.key === 'Home' && value === null ? -1 : event.key === 'Home' ? 0 : options.length - 1;
+			activeIndex =
+				event.key === 'Home' && value === null ? -1 : event.key === 'Home' ? 0 : options.length - 1;
 			void revealActiveOption();
 			return;
 		}
@@ -148,7 +149,7 @@
 	}
 </script>
 
-<Popover {open} onOpenChange={setOpen} placement="item-aligned" size="sm" width="max-content">
+<Popover {open} onOpenChange={setOpen} placement="item-aligned" width="max-content">
 	{#snippet trigger(popoverOpen, toggle)}
 		<button
 			bind:this={triggerElement}
@@ -164,7 +165,7 @@
 			onclick={toggle}
 			onkeydown={handleKeydown}
 		>
-			<span class:placeholder={value === null}>{displayLabel}</span>
+			<span>{displayLabel}</span>
 			<span class="chevron"><ChevronRightIcon /></span>
 		</button>
 	{/snippet}
@@ -220,18 +221,18 @@
 		gap: 0.28rem;
 		border: 0;
 		border-radius: 0.4rem;
-		padding: 0.2rem 0.28rem;
+		padding: 0;
 		background: transparent;
-		color: var(--text);
+		color: var(--muted);
 		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
-		font-size: inherit;
+		font-size: 1rem;
 		font-weight: 400;
 		cursor: pointer;
+		transition: color 140ms ease;
 	}
 
-	.select-trigger:hover,
-	.select-trigger[aria-expanded='true'] {
-		background: color-mix(in srgb, var(--text) 6%, transparent);
+	.select-trigger:not(:disabled):hover {
+		color: var(--text);
 	}
 
 	.select-trigger:focus-visible {
@@ -244,13 +245,8 @@
 		opacity: 0.55;
 	}
 
-	.placeholder {
-		color: var(--muted);
-		font-weight: 400;
-	}
-
 	.chevron {
-		--icon-size: 1rem;
+		--icon-size: 1.25rem;
 		display: inline-flex;
 		transform: rotate(90deg);
 	}
@@ -286,7 +282,7 @@
 	}
 
 	.selected-check {
-		--icon-size: 1rem;
+		--icon-size: 1.25rem;
 
 		display: inline-flex;
 		flex: 0 0 auto;

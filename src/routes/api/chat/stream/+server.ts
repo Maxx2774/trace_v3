@@ -11,6 +11,7 @@ import {
 import { CHAT_SYSTEM_PROMPT } from '$lib/server/chat/model';
 import { createChatResponseStream } from '$lib/server/chat/stream';
 import { beginChatTurn } from '$lib/server/chat/turns';
+import { createToolCatalog } from '$lib/server/chat/tools/registry';
 import { getAdminSupabaseClient } from '$lib/server/supabase/admin';
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { performance } from 'node:perf_hooks';
@@ -51,6 +52,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		return apiError(500, 'persistence_error', 'Meddelandet kunde inte sparas.');
 	}
 	const contextMs = performance.now() - contextStartedAt;
+	const toolCatalog = createToolCatalog({
+		hasPendingMealInteraction: modelContext.interactionBindings.length > 0
+	});
 	const beginPromise = beginChatTurn(adminClient, {
 		userId,
 		conversationId: parsed.input.conversationId,
@@ -63,6 +67,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			adminClient,
 			beginPromise,
 			modelInput: modelContext.messages,
+			toolCatalog,
+			interactionBindings: modelContext.interactionBindings,
 			userId,
 			turnId: parsed.input.turnId,
 			timezone: parsed.input.timezone,

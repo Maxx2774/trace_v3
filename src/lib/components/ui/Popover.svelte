@@ -5,20 +5,13 @@
 	import { scale } from 'svelte/transition';
 
 	type Placement =
-		| 'bottom-end'
-		| 'bottom-start'
-		| 'item-aligned'
-		| 'right-center'
-		| 'top-end'
-		| 'top-start';
-	type Size = 'sm' | 'md';
+		'bottom-end' | 'bottom-start' | 'item-aligned' | 'right-center' | 'top-end' | 'top-start';
 
 	let {
 		trigger,
 		children,
 		open: controlledOpen,
 		placement = 'bottom-end',
-		size = 'md',
 		role,
 		width,
 		fullWidth = false,
@@ -29,7 +22,6 @@
 		children: Snippet<[(restoreFocus?: boolean) => void]>;
 		open?: boolean;
 		placement?: Placement;
-		size?: Size;
 		role?: 'menu' | 'dialog';
 		width?: string;
 		fullWidth?: boolean;
@@ -114,7 +106,9 @@
 
 		if (placement === 'item-aligned') {
 			left = triggerRect.left;
-			const selectedItem = content.querySelector<HTMLElement>('[role="option"][aria-selected="true"]');
+			const selectedItem = content.querySelector<HTMLElement>(
+				'[role="option"][aria-selected="true"]'
+			);
 			if (selectedItem) {
 				const listbox = selectedItem.closest<HTMLElement>('[role="listbox"]');
 				const selectedCenter =
@@ -181,7 +175,7 @@
 	{#if open}
 		<div
 			bind:this={content}
-			class={['content', origin, size]}
+			class={['content', origin]}
 			style:width
 			style="visibility: hidden;"
 			{role}
@@ -206,6 +200,11 @@
 	}
 
 	.content {
+		--popover-item-min-height: 2.7739rem;
+		--popover-item-padding-block: 0.5rem;
+		--popover-item-padding-inline: 0.85rem;
+		--popover-item-icon-size: 1.25rem;
+		--popover-item-gap: 0.65rem;
 		position: fixed;
 		z-index: 200;
 		min-width: 9rem;
@@ -217,26 +216,8 @@
 		background: var(--popover-background);
 		box-shadow: 0 1rem 2.5rem rgb(23 32 51 / 12%);
 		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
-		font-weight: 400;
-	}
-
-	.content.sm {
-		--popover-item-min-height: 2.35rem;
-		--popover-item-padding-block: 0.45rem;
-		--popover-item-padding-inline: 0.7rem;
-		--popover-item-icon-size: 1.1rem;
-		--popover-item-gap: 0.55rem;
-		border-radius: 0.5rem;
-		font-size: 0.9rem;
-	}
-
-	.content.md {
-		--popover-item-min-height: 2.7739rem;
-		--popover-item-padding-block: 0.5rem;
-		--popover-item-padding-inline: 0.85rem;
-		--popover-item-icon-size: 1.25rem;
-		--popover-item-gap: 0.65rem;
 		font-size: 1rem;
+		font-weight: 400;
 	}
 
 	.left-center {

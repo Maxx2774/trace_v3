@@ -45,6 +45,39 @@
   Never imply that the general test suite verified CSS, positioning, or animation unless a
   test actually exercises that behavior.
 
+### Delivery evidence for stateful and provider-backed behavior
+
+- Verification belongs to the exact code state that was tested. Any later production-code
+  change invalidates the affected results; rerun the required checks after the final change
+  before claiming completion. A test from an earlier implementation state is not evidence.
+- For stateful chat, domain, provider, or data-contract work, use the repository's single
+  delivery-verification command when one exists. Until then, run the complete applicable
+  gate explicitly: tests, provider-request contracts, SQL contracts, critical journeys,
+  `pnpm check`, `pnpm lint`, and `pnpm build`. Report any unavailable or failing part rather
+  than silently substituting a smaller check.
+- Maintain a cumulative automated suite for Trace's critical user journeys. New capabilities
+  add coverage without removing existing core journeys. Every persistent interaction journey
+  must finish with a new unrelated user message that completes normally, proving that no stale
+  protocol state still controls the conversation.
+- The meal-duplicate decline journey is a permanent core regression: register a meal, submit
+  the duplicate, decline it, verify that no second meal exists and the interaction is
+  discarded, then verify that a new unrelated message completes normally.
+- Provider-contract tests must inspect the final request object used by the real network path,
+  including tools, forced tool choice, tool search, structured output, and model settings.
+  Mocked orchestration alone does not prove that a provider request is valid.
+- When provider code, tool choice, tool search, deferred loading, namespaces, the OpenAI SDK,
+  or model configuration changes, also run a minimal live-provider canary through the
+  production request builder. It must prove that OpenAI accepts every affected request shape;
+  it does not need to perform domain mutations.
+- Manual testing is useful for diagnosis and product feel, but is not acceptance evidence by
+  itself. A unit test is not E2E, a scripted provider does not prove live-provider acceptance,
+  and skipped or todo critical tests do not count as passing.
+- For a production bug, add a regression that fails for the broken behavior for the intended
+  reason, then passes after the fix, and finally rerun the applicable delivery gate.
+- Handoffs for these changes must report the exact commands, pass/fail/skip counts, and which
+  critical journeys and live canaries ran. In CI, only a green result on the exact commit being
+  delivered is authoritative; local work must not be committed merely to manufacture a SHA.
+
 ## Execute approved plans completely
 
 - When the user explicitly asks to implement or execute an existing plan, treat that

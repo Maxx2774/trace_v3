@@ -79,6 +79,11 @@
 		font-size: 0.86rem;
 	}
 
+	.button.with-label {
+		--icon-size: 1.25rem;
+		font-size: 1rem;
+	}
+
 	.button-label {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);

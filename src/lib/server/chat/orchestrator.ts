@@ -3,7 +3,17 @@ import type { JournalRecord, TurnJournalRecord } from '$lib/features/journal/con
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type OpenAI from 'openai';
 import { runModelStep, ProviderStepError } from './provider';
-import { prepareToolCall, type PreparedToolCall, type ToolCallPreparation } from './tools/registry';
+import { runResponseFinalizer } from './response-finalizer';
+import {
+	prepareToolCall,
+	type CanonicalResponsePart,
+	type PreparedToolCall,
+	type ResponseObligation,
+	type ToolCallPreparation,
+	type ToolCatalog,
+	type ToolOutcomeEffects
+} from './tools/registry';
+import type { PendingInteractionBinding } from './interactions';
 import {
 	completeChatTurn,
 	failChatTurn,
@@ -16,7 +26,6 @@ const MAX_FUNCTION_CALLS = 5;
 const MAX_PARALLEL_CALLS = 3;
 const MODEL_STEP_TIMEOUT_MS = 35_000;
 const TURN_TIMEOUT_MS = 100_000;
-const REGISTRATION_CONFIRMATION = 'Registrerat';
 
 export type TurnOperationError = {
 	operationIndex: number;
@@ -50,6 +59,9 @@ export async function orchestrateChatTurn(
 		turnId: string;
 		timezone: string;
 		modelInput: OpenAI.Responses.ResponseInput;
+		toolCatalog: ToolCatalog;
+		interactionBindings: PendingInteractionBinding[];
+		userMessage: string;
 		beginPromise: Promise<BeginChatTurnResult>;
 		signal: AbortSignal;
 		emit: (event: ChatStreamEvent) => void;
@@ -57,9 +69,10 @@ export async function orchestrateChatTurn(
 	},
 	dependencies: {
 		runModelStep: typeof runModelStep;
+		runResponseFinalizer: typeof runResponseFinalizer;
 		completeChatTurn: typeof completeChatTurn;
 		failChatTurn: typeof failChatTurn;
-	} = { runModelStep, completeChatTurn, failChatTurn }
+	} = { runModelStep, runResponseFinalizer, completeChatTurn, failChatTurn }
 ): Promise<TurnOutcome> {
 	const turnController = new AbortController();
 	const abortTurn = () => turnController.abort(input.signal.reason);
@@ -76,6 +89,8 @@ export async function orchestrateChatTurn(
 	let streamedText = '';
 	const records: JournalRecord[] = [];
 	const errors: TurnOperationError[] = [];
+	const canonicalParts: CanonicalResponsePart[] = [];
+	let responseObligations: ResponseObligation[] = [];
 
 	try {
 		const pendingDeltas: string[] = [];
@@ -84,7 +99,10 @@ export async function orchestrateChatTurn(
 			input.userId,
 			turnController.signal,
 			(delta) => pendingDeltas.push(delta),
-			dependencies.runModelStep
+			dependencies.runModelStep,
+			input.toolCatalog,
+			[],
+			input.interactionBindings.length > 0 ? 'resolve_registration' : undefined
 		);
 		void firstStepPromise.catch(() => {});
 		modelSteps += 1;
@@ -115,6 +133,40 @@ export async function orchestrateChatTurn(
 		for (const entry of begin.journalRecords) {
 			input.emit({ type: 'journal_record_created', turnId: input.turnId, record: entry.record });
 			appendRecord(records, entry.record);
+			appendCanonicalPart(canonicalParts, { kind: 'text', text: 'Registrerat' });
+			appendCanonicalPart(canonicalParts, { kind: 'journal_record', record: entry.record });
+		}
+
+		const recovery = recoveryEffects(begin, input.turnId);
+		if (recovery) {
+			responseObligations = mergeObligations(responseObligations, recovery.responseObligations);
+			turnController.abort(new Error('recovered_tool_outcomes'));
+			const action = deriveNextAction([
+				{
+					requiresAgentContinuation: false,
+					canonicalParts,
+					responseObligations
+				}
+			]);
+			const content =
+				action === 'respond'
+					? (
+							await dependencies.runResponseFinalizer(
+								{
+									referenceInstant: begin.message.createdAt,
+									timezone: input.timezone,
+									currentUserMessage: input.userMessage,
+									canonicalParts,
+									responseObligations
+								},
+								input.userId,
+								input.signal
+							)
+						).text
+					: canonicalText(canonicalParts);
+			input.emit({ type: 'replace', turnId: input.turnId, text: content });
+			await completeAndEmit(input, begin, content, dependencies.completeChatTurn);
+			return { status: outcomeStatus(records, errors), records, errors };
 		}
 		for (const delta of pendingDeltas) {
 			streamedText += delta;
@@ -124,6 +176,18 @@ export async function orchestrateChatTurn(
 		let step = await firstStepPromise;
 		while (true) {
 			if (step.functionCalls.length === 0) {
+				if (
+					responseObligations.length > 0 &&
+					!fulfillsExactly(
+						step.fulfilledObligationRefs,
+						responseObligations.map((obligation) => obligation.ref)
+					)
+				) {
+					throw new TurnTerminalError(
+						'protocol_error',
+						'Svaret uppfyllde inte alla kvarvarande svarsplikter.'
+					);
+				}
 				const canonicalText = step.text.trim();
 				if (streamedText !== canonicalText) {
 					input.emit({ type: 'replace', turnId: input.turnId, text: canonicalText });
@@ -138,7 +202,7 @@ export async function orchestrateChatTurn(
 			}
 
 			const preparations = step.functionCalls.map((call, index) =>
-				prepareToolCall(call, functionCalls + index)
+				prepareToolCall(call, functionCalls + index, input.toolCatalog)
 			);
 			functionCalls += step.functionCalls.length;
 			const terminalPreparation = preparations.find((result) => !result.ok && !result.correctable);
@@ -152,12 +216,12 @@ export async function orchestrateChatTurn(
 				input.userId,
 				input.turnId,
 				begin.leaseExpiresAt,
-				input.timezone
+				input.timezone,
+				input.interactionBindings
 			);
 			const functionOutputs: OpenAI.Responses.ResponseInputItem.FunctionCallOutput[] = [];
 			let terminalExecutionError = false;
-			let successfulJournalWrites = 0;
-			let continueModel = false;
+			const batchEffects: ToolOutcomeEffects[] = [];
 
 			for (let index = 0; index < preparations.length; index += 1) {
 				const preparation = preparations[index];
@@ -170,6 +234,11 @@ export async function orchestrateChatTurn(
 					functionOutputs.push(
 						functionOutput(preparation.callId, preparation.key, preparation.output)
 					);
+					batchEffects.push({
+						requiresAgentContinuation: preparation.correctable,
+						canonicalParts: [],
+						responseObligations: []
+					});
 					continue;
 				}
 
@@ -191,37 +260,58 @@ export async function orchestrateChatTurn(
 				}
 
 				const value = result.value;
-				continueModel ||= value.continueModel === true;
 				functionOutputs.push(
 					functionOutput(preparation.call.callId, preparation.call.key, value.output)
 				);
-				if (value.record && appendRecord(records, value.record)) {
-					successfulJournalWrites += 1;
-					input.emit({
-						type: 'journal_record_created',
-						turnId: input.turnId,
-						record: value.record
-					});
-				} else if (value.record) successfulJournalWrites += 1;
+				batchEffects.push(value.effects);
+				for (const part of value.effects.canonicalParts) {
+					appendCanonicalPart(canonicalParts, part);
+					if (part.kind === 'journal_record' && appendRecord(records, part.record)) {
+						input.emit({
+							type: 'journal_record_created',
+							turnId: input.turnId,
+							record: part.record
+						});
+					}
+				}
+				responseObligations = mergeObligations(
+					responseObligations,
+					value.effects.responseObligations
+				);
 			}
 
 			if (terminalExecutionError) {
 				throw new TurnTerminalError('tool_error', 'En journalpost kunde inte sparas.');
 			}
 
-			if (
-				preparations.length > 0 &&
-				successfulJournalWrites === preparations.length &&
-				errors.length === 0 &&
-				!continueModel
-			) {
-				await completeAndEmit(
-					input,
-					begin,
-					REGISTRATION_CONFIRMATION,
-					dependencies.completeChatTurn
+			const action = deriveNextAction([
+				...batchEffects,
+				{
+					requiresAgentContinuation: false,
+					canonicalParts: [],
+					responseObligations
+				}
+			]);
+			if (action === 'complete') {
+				const content = canonicalText(canonicalParts);
+				await completeAndEmit(input, begin, content, dependencies.completeChatTurn);
+				return { status: outcomeStatus(records, errors), records, errors };
+			}
+			if (action === 'respond') {
+				const finalized = await dependencies.runResponseFinalizer(
+					{
+						referenceInstant: begin.message.createdAt,
+						timezone: input.timezone,
+						currentUserMessage: input.userMessage,
+						canonicalParts,
+						responseObligations
+					},
+					input.userId,
+					turnController.signal
 				);
-				return { status: 'succeeded', records, errors };
+				input.emit({ type: 'replace', turnId: input.turnId, text: finalized.text });
+				await completeAndEmit(input, begin, finalized.text, dependencies.completeChatTurn);
+				return { status: outcomeStatus(records, errors), records, errors };
 			}
 
 			modelInput = [
@@ -242,7 +332,9 @@ export async function orchestrateChatTurn(
 					streamedText += delta;
 					input.emit({ type: 'delta', turnId: input.turnId, text: delta });
 				},
-				dependencies.runModelStep
+				dependencies.runModelStep,
+				input.toolCatalog,
+				responseObligations.map((obligation) => obligation.ref)
 			);
 			modelSteps += 1;
 		}
@@ -329,7 +421,10 @@ async function runStep(
 	userId: string,
 	turnSignal: AbortSignal,
 	onDelta: (delta: string) => void,
-	runner: typeof runModelStep
+	runner: typeof runModelStep,
+	toolCatalog: ToolCatalog,
+	obligationRefs: string[] = [],
+	requiredToolName?: string
 ) {
 	const controller = new AbortController();
 	let timedOut = false;
@@ -340,7 +435,11 @@ async function runStep(
 		controller.abort(new Error('model_step_timeout'));
 	}, MODEL_STEP_TIMEOUT_MS);
 	try {
-		return await runner(input, userId, controller.signal, onDelta);
+		return await runner(input, userId, controller.signal, onDelta, undefined, {
+			toolCatalog,
+			...(obligationRefs.length > 0 ? { obligationRefs } : {}),
+			...(requiredToolName ? { requiredToolName } : {})
+		});
 	} catch (cause) {
 		if (timedOut) throw new ProviderStepError('timeout', 'Svaret tog för lång tid.', true);
 		throw cause;
@@ -356,7 +455,8 @@ async function executePreparedCalls(
 	userId: string,
 	turnId: string,
 	leaseExpiresAt: string,
-	timezone: string
+	timezone: string,
+	interactionBindings: PendingInteractionBinding[]
 ) {
 	const calls = preparations
 		.filter((result): result is Extract<ToolCallPreparation, { ok: true }> => result.ok)
@@ -378,7 +478,8 @@ async function executePreparedCalls(
 						turnId,
 						leaseExpiresAt,
 						operationIndex: call.operationIndex,
-						timezone
+						timezone,
+						interactionBindings
 					},
 					call.args as never
 				)
@@ -494,6 +595,111 @@ function appendRecord(records: JournalRecord[], record: JournalRecord): boolean 
 	}
 	records.push(record);
 	return true;
+}
+
+export function deriveNextAction(
+	effects: ToolOutcomeEffects[]
+): 'complete' | 'respond' | 'continue' {
+	if (effects.some((effect) => effect.requiresAgentContinuation)) return 'continue';
+	if (effects.some((effect) => effect.responseObligations.length > 0)) return 'respond';
+	return 'complete';
+}
+
+function appendCanonicalPart(parts: CanonicalResponsePart[], part: CanonicalResponsePart): void {
+	const duplicate = parts.some((candidate) => {
+		if (candidate.kind !== part.kind) return false;
+		if (candidate.kind === 'text' && part.kind === 'text') return candidate.text === part.text;
+		return (
+			candidate.kind === 'journal_record' &&
+			part.kind === 'journal_record' &&
+			candidate.record.kind === part.record.kind &&
+			candidate.record.value.id === part.record.value.id
+		);
+	});
+	if (!duplicate) parts.push(part);
+}
+
+function mergeObligations(
+	current: ResponseObligation[],
+	incoming: ResponseObligation[]
+): ResponseObligation[] {
+	const merged = new Map(current.map((obligation) => [obligation.ref, obligation]));
+	for (const obligation of incoming) merged.set(obligation.ref, obligation);
+	return [...merged.values()];
+}
+
+function canonicalText(parts: CanonicalResponsePart[]): string {
+	const text = parts
+		.filter(
+			(part): part is Extract<CanonicalResponsePart, { kind: 'text' }> => part.kind === 'text'
+		)
+		.map((part) => part.text)
+		.filter((value, index, values) => values.indexOf(value) === index)
+		.join('\n')
+		.trim();
+	if (!text)
+		throw new TurnTerminalError('protocol_error', 'Ett färdigt svar saknar kanonisk text.');
+	return text;
+}
+
+function recoveryEffects(begin: ProcessingBeginResult, turnId: string): ToolOutcomeEffects | null {
+	if (begin.status !== 'resumed') return null;
+	const obligations: ResponseObligation[] = [];
+	let recovered = false;
+
+	for (const interaction of begin.interactions) {
+		const proposalIndex = operationIndex(interaction.proposalOperationId);
+		if (interaction.proposalTurnId === turnId && interaction.status === 'prepared') {
+			recovered = true;
+			obligations.push({
+				ref: `response_${proposalIndex + 1}`,
+				kind: 'ask_meal_duplicate_confirmation',
+				schemaVersion: 1,
+				confirmationRef: `pending_meal_${proposalIndex + 1}`,
+				proposedMeal: interaction.payload.proposedMeal,
+				existingMeal: interaction.payload.existingMealSnapshot,
+				match: interaction.payload.matchDetails
+			});
+		}
+
+		if (interaction.resolutionTurnId === turnId) {
+			recovered = true;
+			if (interaction.status === 'discarded' && interaction.resolutionReason !== null) {
+				const resolutionIndex = operationIndex(interaction.resolutionOperationId ?? '');
+				if (interaction.resolutionReason !== 'user_confirmed') {
+					obligations.push({
+						ref: `response_${resolutionIndex + 1}`,
+						kind: 'acknowledge_interaction_discard',
+						schemaVersion: 1,
+						confirmationRef: `resolved_meal_${resolutionIndex + 1}`,
+						reason: interaction.resolutionReason
+					});
+				}
+			}
+		}
+	}
+
+	return recovered
+		? {
+				requiresAgentContinuation: false,
+				canonicalParts: [],
+				responseObligations: obligations
+			}
+		: null;
+}
+
+function operationIndex(operationId: string): number {
+	const value = Number(operationId.split(':').at(-1));
+	return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function fulfillsExactly(actual: string[], expected: string[]): boolean {
+	const expectedSet = new Set(expected);
+	return (
+		actual.length === expectedSet.size &&
+		new Set(actual).size === actual.length &&
+		actual.every((ref) => expectedSet.has(ref))
+	);
 }
 
 function safeErrorMessage(error: Error): string {

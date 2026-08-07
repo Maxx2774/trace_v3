@@ -300,7 +300,7 @@
 							onclick={openConversationList}
 						/>
 
-						<Popover placement="bottom-end" size="sm" role="menu" width="max-content" yOffset={-12}>
+						<Popover placement="bottom-end" role="menu" width="max-content" yOffset={-12}>
 							{#snippet trigger(menuOpen, toggle)}
 								<Button
 									variant="ghost"
@@ -816,7 +816,7 @@
 	}
 
 	.registration-status {
-		--icon-size: 1.4em;
+		--icon-size: 1.25rem;
 
 		display: inline-flex;
 		align-self: flex-start;
@@ -825,7 +825,7 @@
 		margin: 0;
 		color: var(--accent);
 		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
-		font-size: 0.95rem;
+		font-size: 1rem;
 		font-weight: 435;
 		line-height: 1.3;
 	}

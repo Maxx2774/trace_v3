@@ -1,12 +1,14 @@
 import type { TurnJournalRecord } from '$lib/features/journal/contracts';
 import type {
 	Meal,
+	MealDuplicateInteractionV1,
 	MealOccurrence,
 	MealOccurrenceInput,
 	MealType,
 	UpdateMealInput
 } from '$lib/features/meals/contracts';
 import { isMealTimePeriod } from '$lib/features/meals/contracts';
+import { parseMealDuplicateInteraction } from '$lib/server/chat/interactions';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 type MealIngredientRow = {
@@ -53,6 +55,24 @@ export type RecordMealInput = {
 	occurred: MealOccurrenceInput;
 };
 
+export type PrepareMealRegistrationResult =
+	| { status: 'created'; meal: Meal; replayed: boolean }
+	| {
+			status: 'confirmation_required';
+			interaction: MealDuplicateInteractionV1;
+			replayed: boolean;
+	  };
+
+export type ResolveMealDuplicateResult =
+	| { status: 'registered'; meal: Meal; replayed: boolean }
+	| {
+			status: 'discarded';
+			reason: 'user_declined' | 'conversation_moved_on' | 'corrected_proposal';
+			replayed: boolean;
+	  }
+	| { status: 'already_resolved'; decision: 'register' | 'discard' }
+	| { status: 'not_found' };
+
 export class MealNotFoundError extends Error {}
 export class MealRevisionConflictError extends Error {}
 export class MealMutationConflictError extends Error {}
@@ -69,7 +89,7 @@ export async function createMealFromChat(
 		operationIndex: number;
 		meal: RecordMealInput;
 	}
-): Promise<Meal> {
+): Promise<PrepareMealRegistrationResult> {
 	const occurrence = occurrenceParameters(input.meal.occurred);
 	const { data, error } = await client.rpc('create_meal_from_chat', {
 		p_user_id: input.userId,
@@ -82,7 +102,71 @@ export async function createMealFromChat(
 	});
 
 	if (error) throw error;
-	return data as Meal;
+	const result = data as Record<string, unknown>;
+	if (result.status === 'created') {
+		return {
+			status: 'created',
+			meal: result.meal as Meal,
+			replayed: result.replayed === true
+		};
+	}
+	if (result.status === 'confirmation_required') {
+		return {
+			status: 'confirmation_required',
+			interaction: parseMealDuplicateInteraction(result.interaction),
+			replayed: result.replayed === true
+		};
+	}
+	throw new Error('Databasen returnerade ett okänt måltidsutfall.');
+}
+
+export async function resolveMealDuplicateInteraction(
+	client: SupabaseClient,
+	input: {
+		userId: string;
+		turnId: string;
+		leaseExpiresAt: string;
+		operationIndex: number;
+		interactionId: string;
+		decision: 'register' | 'discard';
+		reason?: 'user_declined' | 'conversation_moved_on' | 'corrected_proposal';
+	}
+): Promise<ResolveMealDuplicateResult> {
+	const { data, error } = await client.rpc('resolve_meal_duplicate_interaction', {
+		p_user_id: input.userId,
+		p_resolution_turn_id: input.turnId,
+		p_lease_expires_at: input.leaseExpiresAt,
+		p_operation_index: input.operationIndex,
+		p_interaction_id: input.interactionId,
+		p_decision: input.decision,
+		p_reason: input.reason ?? null
+	});
+	if (error) throw error;
+
+	const result = data as Record<string, unknown>;
+	if (result.status === 'registered') {
+		return {
+			status: 'registered',
+			meal: result.meal as Meal,
+			replayed: result.replayed === true
+		};
+	}
+	if (
+		result.status === 'discarded' &&
+		(result.reason === 'user_declined' ||
+			result.reason === 'conversation_moved_on' ||
+			result.reason === 'corrected_proposal')
+	) {
+		return { status: 'discarded', reason: result.reason, replayed: result.replayed === true };
+	}
+	if (
+		result.status === 'already_resolved' &&
+		(result.decision === 'register' || result.decision === 'discard')
+	) {
+		return { status: 'already_resolved', decision: result.decision };
+	}
+	if (result.status === 'not_found') return { status: 'not_found' };
+	throw new Error('Databasen returnerade ett okänt interaction-utfall.');
 }
 
 export async function updateOwnedMeal(

@@ -6,8 +6,14 @@ import {
 } from '$lib/features/chat/contracts';
 import { getLocalDateTime } from '$lib/date-time';
 import type { TurnJournalRecord } from '$lib/features/journal/contracts';
+import type { MealDuplicateInteractionV1 } from '$lib/features/meals/contracts';
 import { listConversationJournalRecords } from '$lib/server/meals/meals';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import {
+	listPendingMealDuplicateInteractions,
+	projectPendingInteraction,
+	type PendingInteractionBinding
+} from './interactions';
 
 export type ModelHistoryMessage = {
 	turnId: string;
@@ -19,6 +25,7 @@ export type ModelHistoryMessage = {
 export type ModelContext = {
 	messages: Array<{ role: 'user' | 'assistant' | 'developer'; content: string }>;
 	referenceBindings: Array<{ handle: string; kind: 'meal'; recordId: string }>;
+	interactionBindings: PendingInteractionBinding[];
 };
 
 export class ModelContextConversationNotFoundError extends Error {}
@@ -37,6 +44,7 @@ export async function prepareModelContext(
 ): Promise<ModelContext> {
 	let history: ModelHistoryMessage[] = [];
 	let records: TurnJournalRecord[] = [];
+	let pendingInteractions: MealDuplicateInteractionV1[] = [];
 
 	if (input.conversationId) {
 		const { data: conversation, error: conversationError } = await client
@@ -51,15 +59,19 @@ export async function prepareModelContext(
 			throw new ModelContextConversationNotFoundError('Konversationen hittades inte.');
 		}
 
-		const { data: messages, error: messagesError } = await client
-			.from('messages')
-			.select('turn_id,role,content,created_at')
-			.eq('conversation_id', input.conversationId)
-			.eq('user_id', input.userId)
-			.neq('turn_id', input.turnId)
-			.order('created_at', { ascending: false })
-			.order('id', { ascending: false })
-			.limit(200);
+		const [messagesResult, interactions] = await Promise.all([
+			client
+				.from('messages')
+				.select('turn_id,role,content,created_at')
+				.eq('conversation_id', input.conversationId)
+				.eq('user_id', input.userId)
+				.neq('turn_id', input.turnId)
+				.order('created_at', { ascending: false })
+				.order('id', { ascending: false })
+				.limit(200),
+			listPendingMealDuplicateInteractions(client, input.userId, input.conversationId)
+		]);
+		const { data: messages, error: messagesError } = messagesResult;
 
 		if (messagesError) throw messagesError;
 		history = (
@@ -75,6 +87,7 @@ export async function prepareModelContext(
 			content: message.content,
 			createdAt: message.created_at
 		}));
+		pendingInteractions = interactions;
 
 		records = await listConversationJournalRecords(client, input.userId, [
 			...new Set(history.map((message) => message.turnId))
@@ -84,6 +97,7 @@ export async function prepareModelContext(
 	return buildModelContext({
 		history,
 		journalRecords: records,
+		pendingInteractions,
 		current: { turnId: input.turnId, content: input.message },
 		systemPrompt: input.systemPrompt,
 		timezone: input.timezone,
@@ -94,6 +108,7 @@ export async function prepareModelContext(
 export function buildModelContext(input: {
 	history: ModelHistoryMessage[];
 	journalRecords: TurnJournalRecord[];
+	pendingInteractions?: MealDuplicateInteractionV1[];
 	current: { turnId: string; content: string };
 	systemPrompt: string;
 	timezone: string;
@@ -102,6 +117,19 @@ export function buildModelContext(input: {
 	const localNow = getLocalDateTime(input.now, input.timezone);
 	const dynamicContext = `Aktuellt lokalt datum: ${localNow.date}\nAktuell lokal tid: ${localNow.time}\nVerifierad tidszon: ${input.timezone}`;
 	const turns = groupCompleteTurns(input.history);
+	const pending = selectPendingInteractions(
+		input.pendingInteractions ?? [],
+		input.systemPrompt.length + dynamicContext.length + input.current.content.length
+	);
+	const interactionBindings: PendingInteractionBinding[] = pending.map((interaction, index) => ({
+		handle: `pending_meal_${index + 1}`,
+		kind: 'meal_duplicate',
+		interactionId: interaction.id
+	}));
+	const interactionProjection = pending.map(
+		(interaction, index) =>
+			`${interactionBindings[index].handle}: ${projectPendingInteraction(interaction)}`
+	);
 	const recordCharactersByTurn = new Map<string, number>();
 	for (const entry of input.journalRecords) {
 		recordCharactersByTurn.set(
@@ -112,7 +140,10 @@ export function buildModelContext(input: {
 	const selected: ModelHistoryMessage[][] = [];
 	let messageCount = 1;
 	let characterCount =
-		input.systemPrompt.length + dynamicContext.length + input.current.content.length;
+		input.systemPrompt.length +
+		dynamicContext.length +
+		input.current.content.length +
+		interactionProjection.reduce((total, item) => total + item.length, 0);
 
 	for (const turn of turns.toReversed()) {
 		const turnCharacters =
@@ -156,11 +187,43 @@ export function buildModelContext(input: {
 						}
 					]
 				: []),
+			...(interactionProjection.length > 0
+				? [
+						{
+							role: 'developer' as const,
+							content: `Verifierade väntande måltidsbeslut:\n${interactionProjection.join(
+								'\n'
+							)}\nProtokollregel: hantera varje relevant väntande beslut innan du ger ett terminalt svar. Använd endast respektive handle med food_log.resolve_registration. Ett uttryckligt ja registrerar förslaget. Ett tydligt nej, en korrigering eller ett tydligt ämnesbyte discard:ar det med motsvarande reason. En hälsning eller en fråga om ett orelaterat ämne är ett tydligt ämnesbyte: svara inte direkt och lämna beslutet pending, utan anropa först resolve_registration med conversation_moved_on och responseRequired true. En faktisk följdfråga om förslaget eller ett otydligt svar får lämna det pending. Gissa inte.`
+						}
+					]
+				: []),
 			{ role: 'developer', content: dynamicContext },
 			{ role: 'user', content: input.current.content }
 		],
-		referenceBindings
+		referenceBindings,
+		interactionBindings
 	};
+}
+
+function selectPendingInteractions(
+	interactions: MealDuplicateInteractionV1[],
+	baseCharacters: number
+): MealDuplicateInteractionV1[] {
+	const selected: MealDuplicateInteractionV1[] = [];
+	let characterCount = baseCharacters;
+	for (const interaction of interactions) {
+		const projectionLength = projectPendingInteraction(interaction).length;
+		const nextCharacters = characterCount + projectionLength;
+		if (
+			nextCharacters > CHAT_CONTEXT_MAX_CHARACTERS ||
+			Math.ceil(nextCharacters / 4) > CHAT_CONTEXT_MAX_ESTIMATED_TOKENS
+		) {
+			break;
+		}
+		selected.push(interaction);
+		characterCount = nextCharacters;
+	}
+	return selected;
 }
 
 function projectRecord(entry: TurnJournalRecord): string {

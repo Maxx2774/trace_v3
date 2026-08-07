@@ -2,7 +2,9 @@ import {
 	MealMutationConflictError,
 	MealNotFoundError,
 	MealRevisionConflictError,
+	createMealFromChat,
 	mapMeal,
+	resolveMealDuplicateInteraction,
 	updateOwnedMeal
 } from '$lib/server/meals/meals';
 import type { UpdateMealInput } from '$lib/features/meals/contracts';
@@ -77,6 +79,70 @@ describe('updateOwnedMeal', () => {
 	});
 });
 
+describe('chat meal outcomes', () => {
+	it('maps created and confirmation-required database outcomes explicitly', async () => {
+		const meal = mealFixture();
+		const rpc = vi
+			.fn()
+			.mockResolvedValueOnce({
+				data: { status: 'created', meal, replayed: false },
+				error: null
+			})
+			.mockResolvedValueOnce({
+				data: { status: 'confirmation_required', interaction: interaction(meal), replayed: true },
+				error: null
+			});
+		const client = { rpc } as unknown as SupabaseClient;
+		const request = {
+			userId: '10000000-0000-4000-8000-000000000000',
+			turnId: '20000000-0000-4000-8000-000000000000',
+			leaseExpiresAt: '2026-08-07T10:02:00.000Z',
+			operationIndex: 0,
+			meal: {
+				mealType: meal.mealType,
+				items: meal.items.map((item) => ({
+					name: item.name,
+					amountText: item.amountText,
+					ingredients: item.ingredients.map((ingredient) => ({
+						name: ingredient.name,
+						amountText: ingredient.amountText
+					}))
+				})),
+				occurred: meal.occurrence
+			}
+		};
+
+		await expect(createMealFromChat(client, request)).resolves.toMatchObject({
+			status: 'created',
+			meal
+		});
+		await expect(createMealFromChat(client, request)).resolves.toMatchObject({
+			status: 'confirmation_required',
+			replayed: true
+		});
+	});
+
+	it('maps a registered interaction resolution to its canonical meal', async () => {
+		const meal = mealFixture();
+		const client = {
+			rpc: vi.fn(async () => ({
+				data: { status: 'registered', meal, replayed: false },
+				error: null
+			}))
+		} as unknown as SupabaseClient;
+		await expect(
+			resolveMealDuplicateInteraction(client, {
+				userId: 'user',
+				turnId: 'turn',
+				leaseExpiresAt: 'lease',
+				operationIndex: 0,
+				interactionId: 'interaction',
+				decision: 'register'
+			})
+		).resolves.toEqual({ status: 'registered', meal, replayed: false });
+	});
+});
+
 describe('mapMeal', () => {
 	it('sorts stable items and their ingredients by position', () => {
 		const meal = mapMeal({
@@ -118,3 +184,45 @@ describe('mapMeal', () => {
 		]);
 	});
 });
+
+function interaction(meal: ReturnType<typeof mealFixture>) {
+	const summary = {
+		mealType: meal.mealType,
+		occurrence: meal.occurrence,
+		items: meal.items.map((item) => ({
+			name: item.name,
+			amountText: item.amountText,
+			ingredients: item.ingredients.map((ingredient) => ({
+				name: ingredient.name,
+				amountText: ingredient.amountText
+			}))
+		}))
+	};
+	return {
+		id: 'interaction',
+		kind: 'meal_duplicate',
+		status: 'prepared',
+		schemaVersion: 1,
+		policyVersion: 1,
+		proposalTurnId: 'turn',
+		proposalOperationId: '20000000-0000-4000-8000-000000000000:0',
+		proposalInputHash: 'a'.repeat(64),
+		resolutionTurnId: null,
+		resolutionOperationId: null,
+		resolutionReason: null,
+		payload: {
+			proposedMeal: summary,
+			existingMealSnapshot: summary,
+			matchDetails: {
+				policyVersion: 1,
+				anchor: 'identical_payload',
+				timeDifferenceMinutes: null,
+				candidateCount: 1,
+				differences: { mealType: 'match', amounts: 'match', ingredients: 'match' }
+			}
+		},
+		createdAt: '2026-08-07T10:00:00.000Z',
+		activatedAt: null,
+		resolvedAt: null
+	};
+}

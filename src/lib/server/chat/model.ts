@@ -1,7 +1,8 @@
 import { env } from '$env/dynamic/private';
 import OpenAI from 'openai';
 import { createHmac } from 'node:crypto';
-import { TOOL_NAMESPACES } from './tools/registry';
+import { createFinalizerTextConfig } from './response-contract';
+import type { ToolCatalog } from './tools/registry';
 
 export const CHAT_MODEL = 'gpt-5.6-luna';
 
@@ -10,6 +11,7 @@ export const CHAT_SYSTEM_PROMPT = `Du är Trace, en lugn och tydlig samtalspartn
 Gör så här:
 - Tillgängliga verktyg är den enda sanningskällan för vilka strukturerade funktioner du kan använda. Sök fram relevanta verktyg när en begäran kan kräva strukturerad läsning eller mutation.
 - Ett verktygsresultat, aldrig föreslagna argument eller din egen text, är sanningskällan för om en mutation lyckades.
+- Om ett verktygsresultat innehåller en response obligation ska den följa med genom fortsatt arbete och uppfyllas tydligt i det terminala strukturerade svaret. Beskriv aldrig ett väntande förslag som genomfört.
 - Om materiell oklarhet skulle ändra uppgiftens betydelse, ställ en kort naturlig följdfråga i stället för att anropa ett verktyg. Fyll aldrig i saknade fakta.
 - Lyckade registreringar presenteras deterministiskt av appen. Skriv därför ingen egen bekräftelsetext tillsammans med verktygsanrop. Efter ett korrigerbart verktygsfel får du korrigera anropet eller ge en kort naturlig förklaring.
 - Besvara rena hälsningar, tack och bekräftelser kort och naturligt, utan följdfrågor, nya råd eller självpresentation. Gå annars direkt på sak. Svara alltid på samma språk som användarens senaste meddelande.
@@ -36,11 +38,39 @@ export function createSafetyIdentifier(userId: string): string {
 	return `trace-safety-v1:${createHmac('sha256', key).update(userId).digest('base64url')}`;
 }
 
+export function createModelToolConfiguration(toolCatalog: ToolCatalog, requiredToolName?: string) {
+	if (requiredToolName && !toolCatalog.directTools.some((tool) => tool.name === requiredToolName)) {
+		throw new Error(`Det obligatoriska verktyget ${requiredToolName} är inte direkt tillgängligt.`);
+	}
+	return {
+		tools: [
+			...toolCatalog.directTools,
+			...toolCatalog.namespaces,
+			{ type: 'tool_search' as const }
+		],
+		...(requiredToolName
+			? { tool_choice: { type: 'function' as const, name: requiredToolName } }
+			: {})
+	};
+}
+
 export async function createModelStream(
 	input: OpenAI.Responses.ResponseInput,
 	userId: string,
-	signal: AbortSignal
+	signal: AbortSignal,
+	options: {
+		toolCatalog: ToolCatalog;
+		obligationRefs?: string[];
+		requiredToolName?: string;
+	}
 ) {
+	const text = options.obligationRefs?.length
+		? createFinalizerTextConfig(options.obligationRefs)
+		: undefined;
+	const toolConfiguration = createModelToolConfiguration(
+		options.toolCatalog,
+		options.requiredToolName
+	);
 	return getOpenAIClient().responses.create(
 		{
 			model: CHAT_MODEL,
@@ -54,7 +84,8 @@ export async function createModelStream(
 			store: false,
 			stream: true,
 			parallel_tool_calls: true,
-			tools: [...TOOL_NAMESPACES, { type: 'tool_search' }],
+			...toolConfiguration,
+			...(text ? { text } : {}),
 			safety_identifier: createSafetyIdentifier(userId)
 		},
 		{ signal }

@@ -56,6 +56,21 @@ funktionalitet hör hemma i `product.md`.
   formulera en separat bekräftelsetext.
 - Om samma meddelande även innehåller en faktisk fråga registreras måltiden först och ett
   kort naturligt svar på frågan kan därefter visas efter kortet.
+- Innan en ny måltid sparas jämför servern den med samma användares måltider på samma
+  lokala datum. En möjlig dublett kräver samma normaliserade itemnamn inklusive antal och
+  antingen kompatibla verkliga klockslag eller en identisk kanonisk payload när klockslag
+  saknas. Namn normaliseras endast för gemener och whitespace; någon bred semantisk eller
+  fuzzy matchning görs inte.
+- Vid en möjlig dublett skapas ingen måltid och inget kort. Appen ställer i stället en kort
+  naturlig bekräftelsefråga som kan beskriva den verifierade tidigare registreringen.
+  Frågan blir besvarbar först när assistantsvaret har sparats och vänteläget överlever en
+  omladdning.
+- Ett uttryckligt ja skapar exakt en måltid från det sparade förslaget och visar det vanliga
+  deterministiska **Registrerat** med måltidskort. Ett tydligt nej lämnar måltiden osparad
+  och ger ett kort naturligt svar. Ett tydligt byte till ett orelaterat ämne avslutar det
+  väntande beslutet innan det nya ämnet besvaras; en faktisk följdfråga eller ett otydligt
+  svar får däremot lämna beslutet väntande. Tolkningen görs av modellen utan serverbaserade
+  textheuristiker.
 - Från en färdig, sparad konversation kan användaren ändra måltidstyp, datum och tid samt
   redigera, lägga till och ta bort enskilda items och ingredienser. Varje delåtgärd ersätter
   hela den kanoniska strukturen atomiskt med revisionsskydd och idempotent retry.

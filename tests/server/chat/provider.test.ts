@@ -1,4 +1,5 @@
 import { ProviderStepError, runModelStep } from '$lib/server/chat/provider';
+import { createToolCatalog } from '$lib/server/chat/tools/registry';
 import { describe, expect, it, vi } from 'vitest';
 
 describe('runModelStep', () => {
@@ -17,7 +18,8 @@ describe('runModelStep', () => {
 				{ type: 'response.output_item.added', item: { type: 'message' } },
 				{ type: 'response.output_text.delta', delta: 'Hej!' },
 				{ type: 'response.completed', response }
-			]) as never
+			]) as never,
+			{ toolCatalog: createToolCatalog({ hasPendingMealInteraction: false }) }
 		);
 
 		expect(step.mode).toBe('text');
@@ -48,12 +50,45 @@ describe('runModelStep', () => {
 				{ type: 'response.output_item.added', item: { type: 'reasoning' } },
 				{ type: 'response.output_item.added', item: { type: 'tool_search_call' } },
 				{ type: 'response.completed', response: { output } }
-			]) as never
+			]) as never,
+			{ toolCatalog: createToolCatalog({ hasPendingMealInteraction: false }) }
 		);
 
 		expect(step.mode).toBe('tool');
 		expect(step.output).toEqual(output);
 		expect(step.functionCalls[0].call_id).toBe('call_meal');
+	});
+
+	it('unwraps a structured terminal response without streaming its JSON envelope', async () => {
+		const onDelta = vi.fn();
+		const raw = JSON.stringify({
+			text: 'Vill du registrera ytterligare en gröt?',
+			fulfilledObligationRefs: ['response_1']
+		});
+		const step = await runModelStep(
+			[{ role: 'user', content: 'Jag åt gröt' }],
+			'user',
+			new AbortController().signal,
+			onDelta,
+			fakeStream([
+				{ type: 'response.output_item.added', item: { type: 'message' } },
+				{ type: 'response.output_text.delta', delta: raw },
+				{
+					type: 'response.completed',
+					response: {
+						output: [{ type: 'message', content: [{ type: 'output_text', text: raw }] }]
+					}
+				}
+			]) as never,
+			{
+				toolCatalog: createToolCatalog({ hasPendingMealInteraction: false }),
+				obligationRefs: ['response_1']
+			}
+		);
+
+		expect(onDelta).not.toHaveBeenCalled();
+		expect(step.text).toBe('Vill du registrera ytterligare en gröt?');
+		expect(step.fulfilledObligationRefs).toEqual(['response_1']);
 	});
 
 	it('rejects message-first output that later switches to a tool', async () => {
@@ -67,7 +102,8 @@ describe('runModelStep', () => {
 					{ type: 'response.output_item.added', item: { type: 'message' } },
 					{ type: 'response.output_text.delta', delta: 'Tillfälligt' },
 					{ type: 'response.output_item.added', item: { type: 'function_call' } }
-				]) as never
+				]) as never,
+				{ toolCatalog: createToolCatalog({ hasPendingMealInteraction: false }) }
 			)
 		).rejects.toMatchObject({ code: 'protocol_error' } satisfies Partial<ProviderStepError>);
 	});

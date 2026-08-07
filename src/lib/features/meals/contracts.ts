@@ -128,6 +128,56 @@ export type Meal = {
 	updatedAt: string;
 };
 
+export type MealSummary = {
+	mealType: MealType | null;
+	occurrence: MealOccurrence;
+	items: Array<{
+		name: string;
+		amountText: string | null;
+		ingredients: Array<{
+			name: string;
+			amountText: string | null;
+		}>;
+	}>;
+};
+
+export type MealDuplicateFieldRelation = 'match' | 'unknown' | 'different';
+
+export type MealDuplicateMatchDetails = {
+	policyVersion: 1;
+	anchor: 'time' | 'identical_payload';
+	timeDifferenceMinutes: number | null;
+	candidateCount: number;
+	differences: {
+		mealType: MealDuplicateFieldRelation;
+		amounts: MealDuplicateFieldRelation;
+		ingredients: MealDuplicateFieldRelation;
+	};
+};
+
+export type MealDuplicateInteractionV1 = {
+	id: string;
+	kind: 'meal_duplicate';
+	status: 'prepared' | 'pending' | 'confirmed' | 'discarded';
+	schemaVersion: 1;
+	policyVersion: 1;
+	proposalTurnId: string;
+	proposalOperationId: string;
+	proposalInputHash: string;
+	resolutionTurnId: string | null;
+	resolutionOperationId: string | null;
+	resolutionReason:
+		'user_confirmed' | 'user_declined' | 'conversation_moved_on' | 'corrected_proposal' | null;
+	payload: {
+		proposedMeal: MealSummary;
+		existingMealSnapshot: MealSummary;
+		matchDetails: MealDuplicateMatchDetails;
+	};
+	createdAt: string;
+	activatedAt: string | null;
+	resolvedAt: string | null;
+};
+
 export type UpdateMealInput = {
 	id: string;
 	expectedRevision: number;
