@@ -4,7 +4,13 @@
 	import { on } from 'svelte/events';
 	import { scale } from 'svelte/transition';
 
-	type Placement = 'bottom-end' | 'bottom-start' | 'right-center' | 'top-end' | 'top-start';
+	type Placement =
+		| 'bottom-end'
+		| 'bottom-start'
+		| 'item-aligned'
+		| 'right-center'
+		| 'top-end'
+		| 'top-start';
 	type Size = 'sm' | 'md';
 
 	let {
@@ -36,7 +42,7 @@
 	let content = $state<HTMLDivElement | null>(null);
 	let open = $derived(controlledOpen ?? internalOpen);
 	let origin = $derived(
-		placement === 'right-center'
+		placement === 'right-center' || placement === 'item-aligned'
 			? 'left-center'
 			: placement === 'top-start'
 				? 'bottom-left'
@@ -52,11 +58,13 @@
 	const portal: Attachment<HTMLElement> = (element) => {
 		const anchor = document.createComment('popover-portal');
 		const removeClickListener = on(element, 'click', handleContentClick);
+		const removeScrollListener = on(element, 'scroll', updatePosition, { capture: true });
 		element.before(anchor);
 		document.body.append(element);
 
 		return () => {
 			removeClickListener();
+			removeScrollListener();
 			element.remove();
 			anchor.remove();
 		};
@@ -91,6 +99,9 @@
 		if (!root || !content) return;
 
 		const triggerRect = triggerElement().getBoundingClientRect();
+		if (placement === 'item-aligned') {
+			content.style.minWidth = `${Math.ceil(triggerRect.width)}px`;
+		}
 		const contentRect = content.getBoundingClientRect();
 		const maxLeft = window.innerWidth - viewportPadding - contentRect.width;
 		const maxTop = window.innerHeight - viewportPadding - contentRect.height;
@@ -101,7 +112,20 @@
 			? triggerRect.top - offset - contentRect.height
 			: triggerRect.bottom + offset;
 
-		if (placement === 'right-center') {
+		if (placement === 'item-aligned') {
+			left = triggerRect.left;
+			const selectedItem = content.querySelector<HTMLElement>('[role="option"][aria-selected="true"]');
+			if (selectedItem) {
+				const listbox = selectedItem.closest<HTMLElement>('[role="listbox"]');
+				const selectedCenter =
+					selectedItem.offsetTop + selectedItem.offsetHeight / 2 - (listbox?.scrollTop ?? 0);
+				top = triggerRect.top + triggerRect.height / 2 - selectedCenter;
+				content.style.transformOrigin = `left ${selectedCenter}px`;
+			} else {
+				top = triggerRect.bottom + offset;
+				content.style.removeProperty('transform-origin');
+			}
+		} else if (placement === 'right-center') {
 			left = triggerRect.right + offset;
 			top = triggerRect.top + triggerRect.height / 2 - contentRect.height / 2;
 			if (left > maxLeft && triggerRect.left - offset - contentRect.width >= viewportPadding) {
@@ -117,8 +141,9 @@
 			top = triggerRect.top - offset - contentRect.height;
 		}
 
+		const clampedTop = clamp(top + yOffset, viewportPadding, maxTop);
 		content.style.left = `${Math.round(clamp(left, viewportPadding, maxLeft))}px`;
-		content.style.top = `${Math.round(clamp(top + yOffset, viewportPadding, maxTop))}px`;
+		content.style.top = `${placement === 'item-aligned' ? clampedTop : Math.round(clampedTop)}px`;
 		content.style.visibility = 'visible';
 	}
 
@@ -192,7 +217,7 @@
 		background: var(--popover-background);
 		box-shadow: 0 1rem 2.5rem rgb(23 32 51 / 12%);
 		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
-		font-weight: 435;
+		font-weight: 400;
 	}
 
 	.content.sm {
@@ -207,11 +232,11 @@
 
 	.content.md {
 		--popover-item-min-height: 2.7739rem;
-		--popover-item-padding-block: 0.6rem;
+		--popover-item-padding-block: 0.5rem;
 		--popover-item-padding-inline: 0.85rem;
-		--popover-item-icon-size: 1.54rem;
+		--popover-item-icon-size: 1.25rem;
 		--popover-item-gap: 0.65rem;
-		font-size: 1.1rem;
+		font-size: 1rem;
 	}
 
 	.left-center {

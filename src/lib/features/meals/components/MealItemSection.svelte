@@ -1,7 +1,7 @@
 <script lang="ts">
 	import DeleteIcon from '$lib/components/icons/DeleteIcon.svelte';
 	import EditIcon from '$lib/components/icons/EditIcon.svelte';
-	import type { MealItem } from '../contracts';
+	import type { MealIngredient, MealItem } from '../contracts';
 	import type { MealIngredientDraft, MealItemDraft } from '../meal-mutations';
 	import MealEntryEditor from './MealEntryEditor.svelte';
 
@@ -9,6 +9,7 @@
 		item,
 		editing,
 		saving,
+		metaLabel = null,
 		editorActive,
 		canRemove,
 		itemDraft,
@@ -27,6 +28,7 @@
 		item: MealItem;
 		editing: boolean;
 		saving: boolean;
+		metaLabel?: string | null;
 		editorActive: boolean;
 		canRemove: boolean;
 		itemDraft: MealItemDraft | null;
@@ -41,7 +43,22 @@
 		onSaveItem: (draft: MealItemDraft) => void | Promise<void>;
 		onSaveIngredient: (draft: MealIngredientDraft) => void | Promise<void>;
 		onCancelEditor: () => void;
-	} = $props();
+		} = $props();
+
+	function capitalizeFirstLetter(value: string): string {
+		return value.length === 0 ? value : value[0].toLocaleUpperCase('sv-SE') + value.slice(1);
+	}
+
+	function lowercaseFirstLetter(value: string): string {
+		return value.length === 0 ? value : value[0].toLocaleLowerCase('sv-SE') + value.slice(1);
+	}
+
+	function formatIngredient(ingredient: MealIngredient): string {
+		const name = lowercaseFirstLetter(ingredient.name);
+		return ingredient.amountText ? `${ingredient.amountText} ${name}` : name;
+	}
+
+	let inlineIngredients = $derived(item.ingredients.map(formatIngredient).join(', '));
 </script>
 
 <section class="meal-item">
@@ -56,8 +73,12 @@
 	{:else}
 		<div class="item-row">
 			<p class="item-name">
-				{item.name}{#if item.amountText}<span> · {item.amountText}</span>{/if}
+				{capitalizeFirstLetter(item.name)}{#if item.amountText}<span> · {item.amountText}</span>{/if}
+				{#if !editing && inlineIngredients}
+					<span class="inline-ingredients"> · {inlineIngredients}</span>
+				{/if}
 			</p>
+			{#if metaLabel}<span class="meta-label">{metaLabel}</span>{/if}
 			{#if editing}
 				<div class="row-actions">
 					<button
@@ -79,8 +100,8 @@
 		</div>
 	{/if}
 
-	{#if item.ingredients.length > 0}
-		<ul aria-label={`Ingredienser i ${item.name}`}>
+	{#if editing && item.ingredients.length > 0}
+		<ul aria-label={`Ingredienser i ${capitalizeFirstLetter(item.name)}`}>
 			{#each item.ingredients as ingredient (ingredient.id)}
 				<li>
 					{#if ingredientDraft?.id === ingredient.id}
@@ -92,11 +113,11 @@
 							onSave={(draft) => onSaveIngredient({ ...draft, itemId: item.id })}
 							onCancel={onCancelEditor}
 						/>
-					{:else}
-						<div class="ingredient-row">
-							<span>
-								{ingredient.name}{#if ingredient.amountText}
-									· {ingredient.amountText}{/if}
+				{:else}
+					<div class="ingredient-row">
+						<span>
+							{lowercaseFirstLetter(ingredient.name)}{#if ingredient.amountText}
+								· {ingredient.amountText}{/if}
 							</span>
 							{#if editing}
 								<div class="row-actions">
@@ -156,16 +177,32 @@
 	}
 
 	.item-name {
+		min-width: 0;
 		margin: 0;
 		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
 		font-size: 1rem;
-		font-weight: 550;
+		font-weight: 400;
 		line-height: 1.3;
 	}
 
 	.item-name span,
 	.ingredient-row {
 		color: color-mix(in srgb, var(--text) 82%, transparent);
+	}
+
+	.item-name .inline-ingredients {
+		font-family: 'General Sans', ui-sans-serif, system-ui, sans-serif;
+		font-size: 0.92rem;
+	}
+
+	.meta-label {
+		margin-left: auto;
+		color: var(--muted);
+		font-size: 0.9rem;
+		line-height: 1.3;
+		opacity: var(--meal-meta-opacity, 1);
+		white-space: nowrap;
+		transition: opacity 160ms ease;
 	}
 
 	ul {

@@ -34,8 +34,12 @@ type ActiveStream = {
 
 type ChatSessionOptions = {
 	initialConversationPage: ConversationPage;
+	initialView?:
+		{ view: 'new' } | { view: 'conversations' } | { view: 'conversation'; conversationId: string };
 	onMessagesChanged: () => void | Promise<void>;
 	onJournalRecordCreated?: (entry: TurnJournalRecord) => void | Promise<void>;
+	onConversationCreated?: (conversation: ConversationSummary) => void | Promise<void>;
+	onConversationUnavailable?: () => void | Promise<void>;
 };
 
 export function createChatSession(options: ChatSessionOptions) {
@@ -75,6 +79,17 @@ class ChatSession {
 	constructor(private readonly options: ChatSessionOptions) {
 		this.conversations = options.initialConversationPage.conversations;
 		this.nextConversationCursor = options.initialConversationPage.nextCursor;
+
+		if (options.initialView?.view === 'conversations') {
+			this.historyOpen = true;
+		} else if (options.initialView?.view === 'conversation') {
+			const { conversationId } = options.initialView;
+			this.activeConversationId = conversationId;
+			this.conversationLoading = true;
+			this.startedAt =
+				this.conversations.find((conversation) => conversation.id === conversationId)?.createdAt ??
+				null;
+		}
 	}
 
 	destroy() {
@@ -150,25 +165,28 @@ class ChatSession {
 		this.returnToHistoryAfterDelete = false;
 	};
 
-	deleteConversation = async (conversationId = this.activeConversationId) => {
+	deleteConversation = async (conversationId = this.activeConversationId): Promise<boolean> => {
 		if (
 			!conversationId ||
 			this.activeStream ||
 			this.conversationLoading ||
 			this.olderMessagesLoading
 		)
-			return;
+			return false;
 
 		try {
 			const { id } = await deleteConversationRemote(conversationId);
+			const deletedActiveConversation = this.activeConversationId === id;
 			this.conversations = this.conversations.filter((conversation) => conversation.id !== id);
-			if (this.activeConversationId === id) {
+			if (deletedActiveConversation) {
 				const returnToHistory = this.returnToHistoryAfterDelete;
 				this.startNewConversation();
 				if (returnToHistory) this.openHistory();
 			}
+			return deletedActiveConversation;
 		} catch {
 			this.statusMessage = 'Konversationen kunde inte raderas.';
+			return false;
 		}
 	};
 
@@ -185,6 +203,27 @@ class ChatSession {
 	openHistory = () => {
 		this.historyOpen = true;
 		this.historyError = null;
+	};
+
+	syncRouteConversation = (conversationId: string | null) => {
+		if (this.activeStream) {
+			if (conversationId === this.activeConversationId) this.historyOpen = false;
+			return;
+		}
+
+		if (conversationId === null) {
+			if (this.activeConversationId !== null || this.conversationLoading) {
+				this.startNewConversation();
+			}
+			return;
+		}
+
+		if (conversationId === this.activeConversationId) {
+			this.historyOpen = false;
+			return;
+		}
+
+		void this.selectConversation(conversationId);
 	};
 
 	loadMoreConversations = async () => {
@@ -244,10 +283,17 @@ class ChatSession {
 			this.updateConversationCache(conversation);
 			this.conversationLoading = false;
 			await this.options.onMessagesChanged();
-		} catch {
-			if (selection === this.conversationSelection) {
+		} catch (cause) {
+			if (selection !== this.conversationSelection) return;
+
+			if (hasStatus(cause, 404)) {
+				this.startNewConversation();
 				this.statusMessage = 'Konversationen kunde inte öppnas.';
+				void this.options.onConversationUnavailable?.();
+				return;
 			}
+
+			this.statusMessage = 'Konversationen kunde inte öppnas.';
 		} finally {
 			if (selection === this.conversationSelection) this.conversationLoading = false;
 		}
@@ -402,6 +448,7 @@ class ChatSession {
 		if (event.turnId !== stream.turnId) return;
 
 		if (event.type === 'conversation') {
+			const createdConversation = stream.conversationId === null;
 			stream.persisted = true;
 			stream.conversationId = event.conversation.id;
 			this.activeConversationId = event.conversation.id;
@@ -411,6 +458,7 @@ class ChatSession {
 					: message
 			);
 			this.updateConversationCache(event.conversation);
+			if (createdConversation) void this.options.onConversationCreated?.(event.conversation);
 			if (stream.stopRequested) stream.controller.abort();
 		} else if (event.type === 'delta') {
 			this.messages = this.messages.map((message) =>
@@ -454,6 +502,12 @@ class ChatSession {
 	private updateConversationCache(conversation: ConversationSummary) {
 		this.conversations = upsertConversation(this.conversations, conversation);
 	}
+}
+
+function hasStatus(cause: unknown, status: number): boolean {
+	return (
+		typeof cause === 'object' && cause !== null && 'status' in cause && cause.status === status
+	);
 }
 
 export function upsertJournalRecord(

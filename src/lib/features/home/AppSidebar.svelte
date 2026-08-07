@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import Wordmark from '$lib/components/brand/Wordmark.svelte';
 	import ChevronRightIcon from '$lib/components/icons/ChevronRightIcon.svelte';
 	import OverviewActiveIcon from '$lib/components/icons/OverviewActiveIcon.svelte';
 	import OverviewIcon from '$lib/components/icons/OverviewIcon.svelte';
 	import AccountMenu from '$lib/features/auth/AccountMenu.svelte';
+	import { getPrimaryNavigationUrl } from '$lib/features/chat/chat-url';
 
 	let {
 		open,
@@ -21,6 +23,7 @@
 		displayName: string;
 		overviewActive: boolean;
 	} = $props();
+	let overviewHref = $derived(getPrimaryNavigationUrl(resolve('/'), page.url));
 </script>
 
 <button
@@ -54,7 +57,7 @@
 	<nav aria-label="Trace">
 		<a
 			class:active={overviewActive}
-			href={resolve('/')}
+			href={resolve(overviewHref)}
 			aria-current={overviewActive ? 'page' : undefined}
 		>
 			{#if overviewActive}<OverviewActiveIcon />{:else}<OverviewIcon />{/if}

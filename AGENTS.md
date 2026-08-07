@@ -35,6 +35,15 @@
   is identified.
 - Reproduce bugs when practical, run checks proportional to risk, and never claim
   unverified behavior.
+- Use the smallest verification scope that matches the change. For presentation-only CSS,
+  spacing, color, or typography changes, run `pnpm check` and visually inspect when layout
+  matters; do not run the full test suite by default.
+- For component behavior, run `pnpm check` plus the relevant focused tests. Run the full
+  test suite for cross-cutting behavior, server or data-contract changes, or when focused
+  coverage is unavailable and regression risk justifies it.
+- In the handoff, distinguish compilation, automated behavior tests, and visual inspection.
+  Never imply that the general test suite verified CSS, positioning, or animation unless a
+  test actually exercises that behavior.
 
 ## Execute approved plans completely
 

@@ -39,7 +39,7 @@
 		color: var(--text);
 		cursor: pointer;
 		font: inherit;
-		font-weight: 435;
+		font-weight: 400;
 		text-align: left;
 		white-space: nowrap;
 	}

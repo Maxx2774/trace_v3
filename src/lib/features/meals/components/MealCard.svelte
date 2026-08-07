@@ -1,7 +1,11 @@
 <script lang="ts">
+	import { tick } from 'svelte';
+	import type { Attachment } from 'svelte/attachments';
+	import CheckmarkIcon from '$lib/components/icons/CheckmarkIcon.svelte';
 	import EditIcon from '$lib/components/icons/EditIcon.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
+	import { getRevealMotion } from '$lib/motion';
 	import {
 		MEAL_TYPE_OPTIONS,
 		mealTypeLabel,
@@ -47,24 +51,168 @@
 
 	let editing = $state(false);
 	let saving = $state(false);
+	let closing = $state(false);
+	let editButtonSuppressed = $state(false);
+	let cardElement = $state<HTMLElement | null>(null);
+	let previewElement = $state<HTMLElement | null>(null);
+	let slotElement = $state<HTMLDivElement | null>(null);
+	let restingHeight = $state<number | null>(null);
+	let overlayBounds = $state<{
+		left: number;
+		top: number;
+		width: number;
+		height: number;
+		centerY: number;
+		cardLeft: number;
+		cardWidth: number;
+	} | null>(null);
 	let editor = $state<Editor | null>(null);
 	let errorMessage = $state<string | null>(null);
 	let revisionConflict = $state(false);
 	let retryMutation = $state<{ signature: string; id: string } | null>(null);
+	let overlayAnimation: Animation | null = null;
+	let viewAnimation: Animation | null = null;
 	let timeLabel = $derived(formatMealOccurrence(meal.occurrence));
+	let selectedMealType = $derived(meal.mealType);
+	let readOnlyMealLabel = $derived(
+		meal.mealType === null
+			? timeLabel
+			: `${mealTypeLabel(meal.mealType)} ${lowercaseFirstLetter(timeLabel)}`
+	);
+	let overlayStyle = $derived(
+		overlayBounds
+			? `--meal-overlay-left: ${overlayBounds.left}px; --meal-overlay-top: ${overlayBounds.top}px; --meal-overlay-width: ${overlayBounds.width}px; --meal-overlay-height: ${overlayBounds.height}px; --meal-overlay-center-y: ${overlayBounds.centerY}px; --meal-overlay-card-left: ${overlayBounds.cardLeft}px; --meal-overlay-card-width: ${overlayBounds.cardWidth}px;`
+			: undefined
+	);
 
-	function beginEditing() {
+	async function beginEditing() {
+		if (closing) return;
+		editButtonSuppressed = false;
 		errorMessage = null;
 		revisionConflict = false;
+		restingHeight = cardElement?.getBoundingClientRect().height ?? null;
+		updateOverlayBounds();
 		editing = true;
+		await tick();
+		updateOverlayBounds();
+		if (!cardElement || !overlayBounds || prefersReducedMotion())
+			return;
+		const revealMotion = getRevealMotion(cardElement);
+		overlayAnimation?.cancel();
+		overlayAnimation = cardElement.animate(
+			[
+				{ filter: `blur(${revealMotion.blur})`, opacity: 0, transform: 'translateY(-50%)' },
+				{ filter: 'blur(0)', opacity: 1, transform: 'translateY(-50%)' }
+			],
+			{ duration: revealMotion.duration, easing: revealMotion.easing }
+		);
+		await overlayAnimation.finished.catch(() => undefined);
+		overlayAnimation = null;
 	}
 
-	function finishEditing() {
-		if (saving) return;
+	async function finishEditing() {
+		if (saving || closing) return;
+		closing = true;
+		overlayAnimation?.cancel();
+		viewAnimation?.cancel();
+		if (cardElement && overlayBounds && !prefersReducedMotion()) {
+			await tick();
+			overlayAnimation = cardElement.animate(
+				[{ opacity: 1 }, { opacity: 0 }],
+				{ duration: 260, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' }
+			);
+			if (previewElement) {
+				viewAnimation = previewElement.animate([{ opacity: 0 }, { opacity: 1 }], {
+					duration: 260,
+					easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+					fill: 'forwards'
+				});
+			}
+			await Promise.all([
+				overlayAnimation.finished.catch(() => undefined),
+				viewAnimation?.finished.catch(() => undefined)
+			]);
+		}
 		editor = null;
 		errorMessage = null;
 		revisionConflict = false;
+		editButtonSuppressed = true;
 		editing = false;
+		restingHeight = null;
+		overlayBounds = null;
+		closing = false;
+		await tick();
+		overlayAnimation?.cancel();
+		viewAnimation?.cancel();
+		overlayAnimation = null;
+		viewAnimation = null;
+		await waitForPaint();
+		editButtonSuppressed = false;
+	}
+
+	function waitForPaint(): Promise<void> {
+		return new Promise((resolve) => {
+			requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+		});
+	}
+
+	function updateOverlayBounds() {
+		const messages = cardElement?.closest<HTMLElement>('.messages');
+		if (!messages || !slotElement) return;
+		const view = messages.getBoundingClientRect();
+		const slot = slotElement.getBoundingClientRect();
+		const inset = 8;
+		const availableHeight = Math.max(0, view.height - inset * 2);
+		const cardHeight = Math.min(cardElement?.getBoundingClientRect().height ?? slot.height, availableHeight);
+		const preferredCenterY = slot.top + slot.height / 2;
+		const minimumCenterY = view.top + inset + cardHeight / 2;
+		const maximumCenterY = view.bottom - inset - cardHeight / 2;
+		overlayBounds = {
+			left: view.left,
+			top: view.top,
+			width: view.width,
+			height: view.height,
+			centerY:
+				minimumCenterY <= maximumCenterY
+					? Math.min(Math.max(preferredCenterY, minimumCenterY), maximumCenterY)
+					: view.top + view.height / 2,
+			cardLeft: slot.left,
+			cardWidth: slot.width
+		};
+	}
+
+	const trackCardSize: Attachment<HTMLElement> = (node) => {
+		cardElement = node;
+		const observer = new ResizeObserver(() => {
+			if (editing) updateOverlayBounds();
+		});
+		observer.observe(node);
+		return () => {
+			observer.disconnect();
+			if (cardElement === node) cardElement = null;
+		};
+	};
+
+	const trackPreview: Attachment<HTMLElement> = (node) => {
+		previewElement = node;
+		return () => {
+			if (previewElement === node) previewElement = null;
+		};
+	};
+
+	function handleWindowResize() {
+		if (editing) updateOverlayBounds();
+	}
+
+	function handleWindowKeydown(event: KeyboardEvent) {
+		if (editing && event.key === 'Escape') {
+			event.preventDefault();
+			void finishEditing();
+		}
+	}
+
+	function prefersReducedMotion(): boolean {
+		return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 	}
 
 	function editItem(itemId: string) {
@@ -110,8 +258,11 @@
 	}
 
 	async function changeMealType(mealType: MealType) {
-		if (mealType === meal.mealType) return;
-		await commit({ mealType });
+		if (mealType === selectedMealType) return;
+		const previousMealType = meal.mealType;
+		selectedMealType = mealType;
+		const saved = await commit({ mealType });
+		if (!saved) selectedMealType = previousMealType;
 	}
 
 	async function saveItem(draft: MealItemDraft) {
@@ -157,8 +308,8 @@
 			items?: MealItemMutationInput[];
 		},
 		closeEditor = false
-	) {
-		if (saving) return;
+	): Promise<boolean> {
+		if (saving) return false;
 		saving = true;
 		clearError();
 		const mutation = {
@@ -177,11 +328,13 @@
 			retryMutation = null;
 			onUpdated?.(updated);
 			if (closeEditor) editor = null;
+			return true;
 		} catch (cause) {
 			revisionConflict = isRevisionConflict(cause);
 			errorMessage = revisionConflict
 				? 'Måltiden har ändrats sedan kortet laddades.'
 				: 'Måltiden kunde inte sparas.';
+			return false;
 		} finally {
 			saving = false;
 		}
@@ -200,26 +353,95 @@
 	function isRevisionConflict(cause: unknown): boolean {
 		return Boolean(cause && typeof cause === 'object' && 'status' in cause && cause.status === 409);
 	}
+
+	function lowercaseFirstLetter(value: string): string {
+		return value.length === 0 ? value : value[0].toLocaleLowerCase('sv-SE') + value.slice(1);
+	}
 </script>
 
-<article class="meal-card" aria-label="Registrerad måltid">
-	<div class="meal-heading">
-		{#if editing}
+<svelte:window onresize={handleWindowResize} onkeydown={handleWindowKeydown} />
+
+{#snippet mealItems(editMode: boolean)}
+	<div class="items">
+		{#each meal.items as item, index (item.id)}
+			<MealItemSection
+				{item}
+				editing={editMode}
+				{saving}
+				metaLabel={!editMode && index === 0 ? readOnlyMealLabel : null}
+				editorActive={editMode && editor !== null}
+				canRemove={meal.items.length > 1}
+				itemDraft={editMode && editor?.kind === 'item' && editor.id === item.id ? editor : null}
+				ingredientDraft={editMode &&
+					editor?.kind === 'ingredient' &&
+					editor.itemId === item.id
+					? editor
+					: null}
+				onEditItem={() => editItem(item.id)}
+				onRemoveItem={() => removeItemById(item.id)}
+				onAddIngredient={() => addIngredient(item.id)}
+				onEditIngredient={(ingredientId) => editIngredient(item.id, ingredientId)}
+				onRemoveIngredient={(ingredientId) => removeIngredientById(item.id, ingredientId)}
+				onItemDraftChange={(draft) => (editor = { kind: 'item', ...draft })}
+				onIngredientDraftChange={(draft) => (editor = { kind: 'ingredient', ...draft })}
+				onSaveItem={saveItem}
+				onSaveIngredient={saveIngredient}
+				onCancelEditor={() => (editor = null)}
+			/>
+		{/each}
+	</div>
+{/snippet}
+
+<div
+	bind:this={slotElement}
+	class="meal-card-slot"
+	style:height={editing && restingHeight !== null ? `${restingHeight}px` : undefined}
+>
+	{#if editing && overlayBounds}
+		<button
+			class="editing-backdrop"
+			type="button"
+			tabindex="-1"
+			aria-label="Avsluta redigering"
+			style={overlayStyle}
+			disabled={saving || closing}
+			onclick={finishEditing}
+			onwheel={(event) => event.preventDefault()}
+		></button>
+	{/if}
+	{#if closing}
+		<article class="meal-card view-preview" aria-hidden="true" {@attach trackPreview}>
+			{@render mealItems(false)}
+		</article>
+	{/if}
+
+<article
+	{@attach trackCardSize}
+	class={[
+		'meal-card',
+		editing && 'editing',
+		closing && 'closing',
+		editButtonSuppressed && 'edit-button-suppressed',
+		meal.items.length > 1 && 'multi-item',
+		overlayBounds && 'overlay',
+		editable && 'editable'
+	]}
+	aria-label="Registrerad måltid"
+	style={overlayStyle}
+>
+	{#if editing}
+		<div class="meal-heading">
 			<Select
-				value={meal.mealType}
+				value={selectedMealType}
 				options={MEAL_TYPE_OPTIONS}
 				placeholder="Välj måltidstyp"
 				label="Måltidstyp"
 				disabled={saving}
 				onValueChange={changeMealType}
 			/>
-		{:else}
-			<h3 class:placeholder={meal.mealType === null}>{mealTypeLabel(meal.mealType)}</h3>
-		{/if}
-		<span class="time-label">{timeLabel}</span>
-	</div>
+			<span class="time-label">{timeLabel}</span>
+		</div>
 
-	{#if editing}
 		<button class="change-time-button" type="button" disabled={saving} onclick={editOccurrence}>
 			Ändra datum och tid
 		</button>
@@ -235,29 +457,7 @@
 		/>
 	{/if}
 
-	<div class="items">
-		{#each meal.items as item (item.id)}
-			<MealItemSection
-				{item}
-				{editing}
-				{saving}
-				editorActive={editor !== null}
-				canRemove={meal.items.length > 1}
-				itemDraft={editor?.kind === 'item' && editor.id === item.id ? editor : null}
-				ingredientDraft={editor?.kind === 'ingredient' && editor.itemId === item.id ? editor : null}
-				onEditItem={() => editItem(item.id)}
-				onRemoveItem={() => removeItemById(item.id)}
-				onAddIngredient={() => addIngredient(item.id)}
-				onEditIngredient={(ingredientId) => editIngredient(item.id, ingredientId)}
-				onRemoveIngredient={(ingredientId) => removeIngredientById(item.id, ingredientId)}
-				onItemDraftChange={(draft) => (editor = { kind: 'item', ...draft })}
-				onIngredientDraftChange={(draft) => (editor = { kind: 'ingredient', ...draft })}
-				onSaveItem={saveItem}
-				onSaveIngredient={saveIngredient}
-				onCancelEditor={() => (editor = null)}
-			/>
-		{/each}
-	</div>
+	{@render mealItems(editing)}
 
 	{#if editing}
 		{#if editor?.kind === 'item' && editor.id === null}
@@ -295,9 +495,11 @@
 					variant="ghost"
 					size="compact"
 					type="button"
-					disabled={saving}
-					onclick={finishEditing}>Klar</Button
-				>
+					leadingIcon={CheckmarkIcon}
+					aria-label="Avsluta redigering"
+					disabled={saving || closing}
+					onclick={finishEditing}
+				/>
 			{:else}
 				<Button
 					variant="ghost"
@@ -312,18 +514,67 @@
 		</div>
 	{/if}
 </article>
+</div>
 
 <style>
-	.meal-card {
-		position: relative;
+	.meal-card-slot {
 		width: var(--meal-card-width, min(80%, 32rem));
 		align-self: flex-start;
+	}
+
+	.meal-card {
+		position: relative;
+		width: 100%;
 		box-sizing: border-box;
-		border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+		border: 1px solid color-mix(in srgb, var(--accent) 10%, transparent);
 		border-radius: 1rem;
 		padding: 0.8rem 1rem 0.75rem;
 		background: var(--background);
+		box-shadow: 0 0.25rem 0.9rem rgb(23 32 51 / 4%);
 		color: var(--text);
+	}
+
+	.editing-backdrop {
+		position: fixed;
+		top: var(--meal-overlay-top);
+		left: var(--meal-overlay-left);
+		z-index: 3;
+		width: var(--meal-overlay-width);
+		height: var(--meal-overlay-height);
+		border: 0;
+		padding: 0;
+		background: transparent;
+		cursor: default;
+	}
+
+	.meal-card.editing.overlay {
+		position: fixed;
+		top: var(--meal-overlay-center-y);
+		left: var(--meal-overlay-card-left);
+		z-index: 4;
+		width: var(--meal-overlay-card-width);
+		max-height: calc(var(--meal-overlay-height) - 2rem);
+		box-shadow: 0 1rem 3rem rgb(23 32 51 / 18%);
+		overflow-y: auto;
+		transform: translateY(-50%);
+	}
+
+	.meal-card.closing {
+		pointer-events: none;
+	}
+
+	.view-preview {
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	:global(:root[data-theme='dark']) .meal-card {
+		border-color: color-mix(in srgb, var(--accent) 16%, transparent);
+		box-shadow: none;
+	}
+
+	:global(:root[data-theme='dark']) .meal-card.editing.overlay {
+		box-shadow: 0 1rem 3rem rgb(0 0 0 / 45%);
 	}
 
 	.meal-heading {
@@ -333,20 +584,8 @@
 		gap: 0.75rem;
 	}
 
-	h3 {
-		margin: 0;
-		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
-		font-size: 1rem;
-		font-weight: 550;
-		line-height: 1.3;
-	}
-
-	h3.placeholder {
-		color: var(--muted);
-		font-weight: 435;
-	}
-
 	.time-label {
+		margin-left: auto;
 		color: var(--muted);
 		font-size: 0.9rem;
 		line-height: 1.3;
@@ -357,6 +596,10 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.72rem;
+		margin-top: 0;
+	}
+
+	.meal-card.editing .items {
 		margin-top: 0.75rem;
 	}
 
@@ -383,12 +626,22 @@
 
 	.edit-button {
 		position: absolute;
-		top: 0.55rem;
-		right: 0.55rem;
+		top: 0;
+		right: 0.5rem;
+		bottom: 0;
 		z-index: 1;
+		height: 2rem;
+		margin-block: auto;
 		border-radius: 0.55rem;
 		background: var(--background);
 		transition: opacity 160ms ease;
+	}
+
+	.edit-button.editing,
+	.meal-card.multi-item .edit-button {
+		top: 0.5rem;
+		bottom: auto;
+		margin-block: 0;
 	}
 
 	@media (hover: hover) and (pointer: fine) {
@@ -397,11 +650,22 @@
 			pointer-events: none;
 		}
 
+		.meal-card.editable:hover,
+		.meal-card.editable:focus-within {
+			--meal-meta-opacity: 0;
+		}
+
 		.meal-card:hover .edit-button,
 		.meal-card:focus-within .edit-button {
 			opacity: 1;
 			pointer-events: auto;
 		}
+	}
+
+	.meal-card.edit-button-suppressed .edit-button {
+		opacity: 0;
+		pointer-events: none;
+		transition: none;
 	}
 
 	.change-time-button:hover,

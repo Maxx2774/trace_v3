@@ -1,5 +1,6 @@
 <script lang="ts" generics="T extends string">
 	import { tick } from 'svelte';
+	import CheckmarkIcon from '$lib/components/icons/CheckmarkIcon.svelte';
 	import ChevronRightIcon from '$lib/components/icons/ChevronRightIcon.svelte';
 	import Popover from './Popover.svelte';
 
@@ -33,14 +34,20 @@
 	let selectedIndex = $derived(options.findIndex((option) => option.value === value));
 	let displayLabel = $derived(selectedIndex >= 0 ? options[selectedIndex].label : placeholder);
 	let activeOptionId = $derived(
-		open && activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined
+		open
+			? activeIndex >= 0
+				? `${id}-option-${activeIndex}`
+				: value === null
+					? `${id}-placeholder`
+					: undefined
+			: undefined
 	);
 
 	function setOpen(next: boolean) {
 		if (disabled && next) return;
 		open = next;
 		if (next) {
-			activeIndex = selectedIndex >= 0 ? selectedIndex : 0;
+			activeIndex = selectedIndex;
 			void revealActiveOption();
 		} else {
 			clearTypeahead();
@@ -64,14 +71,15 @@
 		if (event.key === 'Home' || event.key === 'End') {
 			if (!open) return;
 			event.preventDefault();
-			activeIndex = event.key === 'Home' ? 0 : options.length - 1;
+			activeIndex = event.key === 'Home' && value === null ? -1 : event.key === 'Home' ? 0 : options.length - 1;
 			void revealActiveOption();
 			return;
 		}
 
 		if ((event.key === 'Enter' || event.key === ' ') && open) {
 			event.preventDefault();
-			selectIndex(activeIndex);
+			if (activeIndex < 0 && value === null) setOpen(false);
+			else selectIndex(activeIndex);
 			return;
 		}
 
@@ -95,7 +103,12 @@
 	}
 
 	function moveActive(delta: number) {
-		activeIndex = (activeIndex + delta + options.length) % options.length;
+		activeIndex =
+			activeIndex < 0
+				? delta > 0
+					? 0
+					: options.length - 1
+				: (activeIndex + delta + options.length) % options.length;
 		void revealActiveOption();
 	}
 
@@ -135,7 +148,7 @@
 	}
 </script>
 
-<Popover {open} onOpenChange={setOpen} placement="bottom-start" size="sm" width="max-content">
+<Popover {open} onOpenChange={setOpen} placement="item-aligned" size="sm" width="max-content">
 	{#snippet trigger(popoverOpen, toggle)}
 		<button
 			bind:this={triggerElement}
@@ -158,6 +171,22 @@
 
 	{#snippet children(close)}
 		<div id={`${id}-listbox`} class="options" role="listbox" aria-label={label}>
+			{#if value === null}
+				<button
+					id={`${id}-placeholder`}
+					class={['placeholder-option', activeIndex < 0 && 'active']}
+					type="button"
+					role="option"
+					tabindex="-1"
+					aria-selected="true"
+					onpointerdown={(event) => event.preventDefault()}
+					onmousemove={() => (activeIndex = -1)}
+					onclick={() => close(true)}
+				>
+					<span>{placeholder}</span>
+					<span class="selected-check"><CheckmarkIcon /></span>
+				</button>
+			{/if}
 			{#each options as option, index (option.value)}
 				<button
 					id={`${id}-option-${index}`}
@@ -173,7 +202,10 @@
 						close(true);
 					}}
 				>
-					{option.label}
+					<span>{option.label}</span>
+					{#if option.value === value}
+						<span class="selected-check"><CheckmarkIcon /></span>
+					{/if}
 				</button>
 			{/each}
 		</div>
@@ -193,7 +225,7 @@
 		color: var(--text);
 		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
 		font-size: inherit;
-		font-weight: 550;
+		font-weight: 400;
 		cursor: pointer;
 	}
 
@@ -214,7 +246,7 @@
 
 	.placeholder {
 		color: var(--muted);
-		font-weight: 435;
+		font-weight: 400;
 	}
 
 	.chevron {
@@ -227,21 +259,23 @@
 		min-width: 10rem;
 		max-height: min(18rem, calc(100vh - 2rem));
 		overflow-y: auto;
-		padding: 0.25rem;
+		padding: 0;
 	}
 
 	.options button {
 		display: flex;
 		width: 100%;
-		min-height: 2.35rem;
+		min-height: 2.2rem;
 		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
 		border: 0;
-		border-radius: 0.38rem;
-		padding: 0.45rem 0.7rem;
+		border-radius: 0;
+		padding: 0.4rem 0.65rem;
 		background: transparent;
 		color: var(--text);
 		font: inherit;
-		font-weight: 435;
+		font-weight: 400;
 		text-align: left;
 		white-space: nowrap;
 		cursor: pointer;
@@ -251,7 +285,11 @@
 		background: var(--surface-hover);
 	}
 
-	.options button[aria-selected='true'] {
-		font-weight: 500;
+	.selected-check {
+		--icon-size: 1rem;
+
+		display: inline-flex;
+		flex: 0 0 auto;
+		color: var(--accent);
 	}
 </style>

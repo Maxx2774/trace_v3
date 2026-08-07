@@ -34,9 +34,11 @@ funktionalitet hör hemma i `product.md`.
   beskriva det naturligt i chatten.
 - Ett måltidskort motsvarar ett konsumtionstillfälle med en valfri måltidstyp, en gemensam
   tidsuppgift och ett eller flera items. Varje item är en separat rätt, mat, dryck eller ett
-  tillbehör och kan ha sina egna uttryckligen angivna ingredienser.
+  tillbehör och kan ha sina egna uttryckligen angivna ingredienser. I läsläget visas dessa
+  kompakt på samma rad som sitt item, med mängden före ingrediensnamnet.
 - Måltidstypen kan vara Frukost, Lunch, Middag, Mellanmål eller Annat. Om modellen inte
-  säkert känner typen sparas den som okänd tills användaren väljer en typ i kortet.
+  säkert känner typen sparas den som okänd och döljs i läsläget. Valet visas först när
+  användaren öppnar kortets redigeringsläge.
 - En tur kan registrera flera tydligt åtskilda konsumtionstillfällen. Varje måltid, dess
   items och ingredienser sparas atomiskt och idempotent med stabila ID:n.
 - Planerade, hypotetiska och andra personers måltider ska inte registreras. Modellen får
@@ -47,7 +49,8 @@ funktionalitet hör hemma i `product.md`.
   tolkat lokalt datum och strukturerad tid; servern tillför den verifierade IANA-tidszonen
   och härleder UTC-tid och precision. Fri modellgenererad tidstext sparas eller visas inte.
 - Kortet visar Idag, Igår eller veckodag för närliggande historiska datum och annars ett
-  kort absolut datum. Framtida datum presenteras aldrig som exempelvis Imorgon.
+  kort absolut datum. När måltidstypen är känd visas den och tidsuppgiften tillsammans,
+  exempelvis **Lunch igår**. Framtida datum presenteras aldrig som exempelvis Imorgon.
 - En ren, lyckad måltidsregistrering visas direkt efter användarmeddelandet som
   **✓ Registrerat** följt av ett strukturerat kort. Appen fortsätter inte AI-svaret för att
   formulera en separat bekräftelsetext.
@@ -56,6 +59,14 @@ funktionalitet hör hemma i `product.md`.
 - Från en färdig, sparad konversation kan användaren ändra måltidstyp, datum och tid samt
   redigera, lägga till och ta bort enskilda items och ingredienser. Varje delåtgärd ersätter
   hela den kanoniska strukturen atomiskt med revisionsskydd och idempotent retry.
+  Redigeringskortets mittpunkt förankras till det vanliga kortets mittpunkt, så det kan växa
+  ovanpå konversationen utan att göra flödet högre eller lämna sin reserverade plats tom.
+  Kortet hålls samtidigt innanför den scrollbara meddelandeytan mellan headern och inputen
+  och scrollar internt vid behov. Öppningen använder blur och fade, medan stängningen mjukt
+  tonar ut redigeringskortet samtidigt som läskortet tonas in. Animationerna hoppas över när
+  användaren föredrar reducerad rörelse.
+- En vald måltidstyp visas direkt medan ändringen sparas och återställs om sparningen
+  misslyckas.
 - Det sista itemet kan inte tas bort från kortet. Varje lyckad ändring använder serverns
   fullständiga returvärde och överlever omladdning; en samtidig versionskonflikt erbjuder
   omladdning i stället för att visa osparad data som kanonisk.
@@ -66,6 +77,16 @@ funktionalitet hör hemma i `product.md`.
 
 - Konversationer och meddelanden sparas i Supabase och är knutna till den autentiserade
   användaren.
+- Aktiv konversation anges med `?conversation=:conversationId` och konversationslistan med
+  `?chat=conversations`. Query-parametrarna kan kombineras med nuvarande och framtida
+  huvudvyer, så omladdning, bokmärken och webbläsarens Back/Forward återställer rätt chattvy
+  utan att ersätta exempelvis Översikt eller Journal som primär navigation. Rätt chattvy
+  renderas redan i det servergenererade skalet, så en omladdad konversation visar inte först
+  vyn för ny chatt medan meddelandena hämtas.
+- När det första meddelandet skapar en konversation ersätts den tomma chattens URL-state med
+  den nya konversationens ID. Ny chatt tar bara bort chattparametrarna och bevarar andra
+  filter. Panelens öppet/stängt-läge är fortsatt lokalt gränssnittstillstånd och skrivs inte
+  till URL:en.
 - De 25 senaste konversationssammanfattningarna förladdas på servern innan appytan visas.
 - Tomläget för en ny chatt visar de tre senaste konversationerna direkt under skrivfältet och
   låter användaren öppna dem utan att först gå till hela konversationslistan. Raderna visar

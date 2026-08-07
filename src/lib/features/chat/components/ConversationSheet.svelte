@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import ChevronRightIcon from '$lib/components/icons/ChevronRightIcon.svelte';
 	import CheckmarkIcon from '$lib/components/icons/CheckmarkIcon.svelte';
 	import ChatHistoryIcon from '$lib/components/icons/ChatHistoryIcon.svelte';
@@ -16,6 +19,8 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import { cubicOut } from 'svelte/easing';
 	import { fade } from 'svelte/transition';
+	import type { NavigationTarget } from '@sveltejs/kit';
+	import { getChatUrl, getChatUrlState, type ChatUrlState } from '../chat-url';
 	import {
 		getConversationStartDateLabel,
 		getRecentConversationDateLabel
@@ -36,10 +41,18 @@
 	let composerHasDraft = $state(false);
 	let composerMultiline = $state(false);
 	let messageScroller = $state<HTMLElement | null>(null);
+	const initialChatUrlState = untrack(() => getChatUrlState(page.url));
+	const initialSessionView =
+		initialChatUrlState.view === 'conversation' || initialChatUrlState.view === 'conversations'
+			? initialChatUrlState
+			: ({ view: 'new' } as const);
 	const session = createChatSession({
 		initialConversationPage: untrack(() => initialConversationPage),
+		initialView: initialSessionView,
 		onMessagesChanged: scrollToBottom,
-		onJournalRecordCreated: () => void scrollToBottom()
+		onJournalRecordCreated: () => void scrollToBottom(),
+		onConversationCreated: (conversation) => navigateToPersistedConversation(conversation.id),
+		onConversationUnavailable: returnToNewChatUrl
 	});
 	let recordsByTurn = $derived.by(() => {
 		const grouped = new SvelteMap<string, typeof session.journalRecords>();
@@ -65,7 +78,30 @@
 				session.conversationLoading)
 	);
 
+	afterNavigate(({ to }) => {
+		if (isChatAvailableRoute(to)) syncChatUrl(to.url);
+	});
+
+	beforeNavigate(({ to, cancel }) => {
+		if (!session.streaming || !isChatAvailableRoute(to)) return;
+		const state = getChatUrlState(to.url);
+		if (state.view === 'conversations') return;
+		if (state.view === 'conversation' && state.conversationId === session.activeConversationId) {
+			return;
+		}
+		cancel();
+	});
+
 	onMount(() => {
+		if (isChatAvailableRouteId(page.route.id)) {
+			const state = getChatUrlState(page.url);
+			if (state.view === 'conversation') {
+				void session.selectConversation(state.conversationId);
+			} else {
+				syncChatUrl(page.url);
+			}
+		}
+
 		const fullscreenQuery = window.matchMedia('(max-width: 767px)');
 		const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 		const syncFullscreen = () => (fullscreen = fullscreenQuery.matches);
@@ -87,6 +123,80 @@
 	function close() {
 		session.close();
 		onClose();
+	}
+
+	function isChatAvailableRoute(target: NavigationTarget | null): target is NavigationTarget {
+		return isChatAvailableRouteId(target?.route.id ?? null);
+	}
+
+	function isChatAvailableRouteId(routeId: string | null): boolean {
+		return routeId?.startsWith('/(app)') === true && routeId !== '/(app)/settings';
+	}
+
+	function syncChatUrl(url: URL) {
+		const state = getChatUrlState(url);
+		if (state.view === 'conversation') {
+			session.syncRouteConversation(state.conversationId);
+		} else if (state.view === 'conversations') {
+			session.openHistory();
+		} else {
+			session.syncRouteConversation(null);
+			if (state.view === 'invalid') navigateToChatState({ view: 'new' }, true);
+		}
+	}
+
+	function selectConversation(conversationId: string) {
+		if (session.streaming) return;
+		const state = getChatUrlState(page.url);
+		if (state.view === 'conversation' && state.conversationId === conversationId) {
+			session.syncRouteConversation(conversationId);
+			return;
+		}
+
+		void session.selectConversation(conversationId);
+		navigateToChatState({ view: 'conversation', conversationId });
+	}
+
+	function startNewConversation() {
+		if (session.streaming) return;
+		session.startNewConversation();
+		navigateToChatState({ view: 'new' });
+	}
+
+	function openConversationList() {
+		session.openHistory();
+		navigateToChatState({ view: 'conversations' });
+	}
+
+	async function deleteConversation(conversationId?: string) {
+		const conversationListWasOpen = session.historyOpen;
+		const deletedActiveConversation = await session.deleteConversation(conversationId);
+		if (!deletedActiveConversation) return;
+
+		if (conversationListWasOpen) {
+			session.openHistory();
+			navigateToChatState({ view: 'conversations' }, true);
+		} else {
+			returnToNewChatUrl();
+		}
+	}
+
+	function navigateToPersistedConversation(conversationId: string) {
+		if (getChatUrlState(page.url).view === 'conversations') return;
+		navigateToChatState({ view: 'conversation', conversationId }, true);
+	}
+
+	function returnToNewChatUrl() {
+		navigateToChatState({ view: 'new' }, true);
+	}
+
+	function navigateToChatState(
+		state: Exclude<ChatUrlState, { view: 'invalid' }>,
+		replaceState = false
+	) {
+		const href = getChatUrl(page.url, state);
+		if (href === `${page.url.pathname}${page.url.search}${page.url.hash}`) return;
+		void goto(resolve(href), { keepFocus: true, noScroll: true, replaceState });
 	}
 
 	async function scrollToBottom() {
@@ -156,7 +266,7 @@
 							leadingIcon={NewConversationIcon}
 							aria-label="Ny chatt"
 							disabled={session.streaming}
-							onclick={session.startNewConversation}
+							onclick={startNewConversation}
 						/>
 					{:else}
 						<Button
@@ -165,7 +275,7 @@
 							leadingIcon={ChatHistoryIcon}
 							aria-label="Konversationer"
 							aria-expanded={session.historyOpen}
-							onclick={session.openHistory}
+							onclick={openConversationList}
 						/>
 					{/if}
 				</div>
@@ -178,7 +288,7 @@
 							leadingIcon={NewConversationIcon}
 							aria-label="Ny konversation"
 							disabled={session.streaming}
-							onclick={session.startNewConversation}
+							onclick={startNewConversation}
 						/>
 					{:else if conversationActive}
 						<Button
@@ -187,7 +297,7 @@
 							leadingIcon={ChatHistoryIcon}
 							aria-label="Konversationer"
 							aria-expanded={session.historyOpen}
-							onclick={session.openHistory}
+							onclick={openConversationList}
 						/>
 
 						<Popover placement="bottom-end" size="sm" role="menu" width="max-content" yOffset={-12}>
@@ -210,7 +320,7 @@
 								disabled={session.streaming ||
 									session.conversationLoading ||
 									session.olderMessagesLoading}
-								onclick={() => session.deleteConversation()}>Radera konversation</PopoverItem
+								onclick={() => void deleteConversation()}>Radera konversation</PopoverItem
 							>
 						</Popover>
 					{/if}
@@ -238,8 +348,8 @@
 							errorMessage={session.historyError}
 							loadMoreError={session.paginationError}
 							activeConversationId={session.activeConversationId}
-							onSelect={session.selectConversation}
-							onDelete={session.deleteConversation}
+							onSelect={selectConversation}
+							onDelete={(conversationId) => void deleteConversation(conversationId)}
 							onRename={session.renameConversation}
 							onLoadMore={session.loadMoreConversations}
 						/>
@@ -355,10 +465,7 @@
 								<ul>
 									{#each recentConversations as conversation (conversation.id)}
 										<li>
-											<button
-												type="button"
-												onclick={() => session.selectConversation(conversation.id)}
-											>
+											<button type="button" onclick={() => selectConversation(conversation.id)}>
 												<span>{conversation.title}</span>
 												<time datetime={conversation.lastMessageAt}>
 													{getRecentConversationDateLabel(conversation.lastMessageAt)}
@@ -383,19 +490,19 @@
 		z-index: 1;
 		width: 100vw;
 		box-sizing: border-box;
-		filter: blur(8px);
+		filter: blur(var(--motion-reveal-blur));
 		color: var(--text);
 		opacity: 0;
 		pointer-events: auto;
 		transition:
-			opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
-			filter 220ms cubic-bezier(0.22, 1, 0.36, 1);
+			opacity 220ms var(--motion-reveal-easing),
+			filter 220ms var(--motion-reveal-easing);
 	}
 
 	.panel-shell.mobile-open {
 		filter: none;
 		opacity: 1;
-		transition-duration: 340ms;
+		transition-duration: var(--motion-reveal-duration);
 	}
 
 	.panel {
@@ -486,6 +593,10 @@
 		scrollbar-width: thin;
 	}
 
+	.messages {
+		scrollbar-gutter: stable;
+	}
+
 	.view-stack {
 		display: grid;
 		min-height: 0;
@@ -555,7 +666,7 @@
 		transform: translateY(0);
 		transition:
 			opacity 320ms ease var(--reveal-delay),
-			transform 420ms cubic-bezier(0.22, 1, 0.36, 1) var(--reveal-delay);
+			transform 420ms var(--motion-reveal-easing) var(--reveal-delay);
 	}
 
 	.recent-conversations li:nth-child(2) {
@@ -624,7 +735,7 @@
 	}
 
 	.messages {
-		padding: 1rem 1rem 1.5rem;
+		padding: 1rem 0.5rem 1.5rem 1rem;
 		overflow-anchor: none;
 	}
 
@@ -820,13 +931,13 @@
 		.panel {
 			border-left: 1px solid var(--chat-panel-border);
 			background: transparent;
-			filter: blur(8px);
-			transition: filter 220ms cubic-bezier(0.22, 1, 0.36, 1);
+			filter: blur(var(--motion-reveal-blur));
+			transition: filter 220ms var(--motion-reveal-easing);
 		}
 
 		.panel-shell.mobile-open .panel {
 			filter: none;
-			transition-duration: 340ms;
+			transition-duration: var(--motion-reveal-duration);
 		}
 	}
 

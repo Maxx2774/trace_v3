@@ -51,7 +51,10 @@
 	--overlay-backdrop: rgb(23 32 51 / 14%);
 	--sidebar-width: 17.5rem;
 	--chat-panel-width: 500px;
-	--sidebar-easing: cubic-bezier(0.22, 1, 0.36, 1);
+	--motion-reveal-duration: 340ms;
+	--motion-reveal-easing: cubic-bezier(0.22, 1, 0.36, 1);
+	--motion-reveal-blur: 8px;
+	--sidebar-easing: var(--motion-reveal-easing);
 	--surface-elevated: var(--popover-background);
 	--sheet-shadow: 0 1.5rem 5rem rgb(23 32 51 / 18%);
 }

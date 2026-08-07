@@ -36,6 +36,35 @@ beforeEach(() => {
 	streamChat.mockReset();
 });
 
+describe('ChatSession initial view', () => {
+	it('renders the selected conversation shell before its messages are loaded', () => {
+		const conversation = initialConversationPage.conversations[0];
+		const session = createChatSession({
+			initialConversationPage,
+			initialView: { view: 'conversation', conversationId: conversation.id },
+			onMessagesChanged: vi.fn()
+		});
+
+		expect(session.activeConversationId).toBe(conversation.id);
+		expect(session.conversationLoading).toBe(true);
+		expect(session.startedAt).toBe(conversation.createdAt);
+		expect(session.messages).toEqual([]);
+		expect(getConversation).not.toHaveBeenCalled();
+	});
+
+	it('renders the conversation list before hydration', () => {
+		const session = createChatSession({
+			initialConversationPage,
+			initialView: { view: 'conversations' },
+			onMessagesChanged: vi.fn()
+		});
+
+		expect(session.historyOpen).toBe(true);
+		expect(session.activeConversationId).toBeNull();
+		expect(session.conversationLoading).toBe(false);
+	});
+});
+
 describe('ChatSession streaming lifecycle', () => {
 	it('stops offering cancellation as soon as the completed event arrives', async () => {
 		const streamFinished = deferred<void>();
@@ -93,6 +122,56 @@ describe('ChatSession streaming lifecycle', () => {
 		streamFinished.resolve(undefined);
 		await vi.waitFor(() => expect(session.streaming).toBe(false));
 	});
+
+	it('reports a newly persisted conversation exactly once', async () => {
+		let emit!: (event: ChatStreamEvent) => void;
+		const streamFinished = deferred<void>();
+		streamChat.mockImplementationOnce((input) => {
+			emit = input.onEvent;
+			return streamFinished.promise;
+		});
+		const onConversationCreated = vi.fn();
+		const session = createChatSession({
+			initialConversationPage,
+			onMessagesChanged: vi.fn(),
+			onConversationCreated
+		});
+
+		session.submit('Hej');
+		const turnId = session.messages[0].turnId;
+		const conversation = summary('20000000-0000-4000-8000-000000000000', 'Hälsning och samtal');
+		const userMessage = {
+			id: session.messages[0].id,
+			conversationId: conversation.id,
+			turnId,
+			role: 'user' as const,
+			content: 'Hej',
+			createdAt: session.messages[0].createdAt
+		};
+
+		emit({ type: 'conversation', turnId, conversation, message: userMessage });
+		emit({ type: 'conversation', turnId, conversation, message: userMessage });
+
+		expect(session.activeConversationId).toBe(conversation.id);
+		expect(onConversationCreated).toHaveBeenCalledOnce();
+		expect(onConversationCreated).toHaveBeenCalledWith(conversation);
+
+		emit({
+			type: 'done',
+			turnId,
+			conversation,
+			message: {
+				id: session.messages[1].id,
+				conversationId: conversation.id,
+				turnId,
+				role: 'assistant',
+				content: 'Hej!',
+				createdAt: '2026-08-06T10:00:01.000Z'
+			}
+		});
+		streamFinished.resolve(undefined);
+		await vi.waitFor(() => expect(session.streaming).toBe(false));
+	});
 });
 
 describe('ChatSession.selectConversation', () => {
@@ -123,6 +202,49 @@ describe('ChatSession.selectConversation', () => {
 		expect(onMessagesChanged).toHaveBeenCalledTimes(1);
 	});
 
+	it('synchronizes a route selection without refetching the active conversation', async () => {
+		const conversation = detail(initialConversationPage.conversations[0]);
+		getConversation.mockResolvedValueOnce(conversation);
+		const session = createChatSession({ initialConversationPage, onMessagesChanged: vi.fn() });
+
+		session.syncRouteConversation(conversation.id);
+		await vi.waitFor(() => expect(session.conversationLoading).toBe(false));
+		session.openHistory();
+		session.syncRouteConversation(conversation.id);
+
+		expect(session.historyOpen).toBe(false);
+		expect(getConversation).toHaveBeenCalledOnce();
+	});
+
+	it('resets the active conversation when the route points to a new chat', async () => {
+		const conversation = detail(initialConversationPage.conversations[0]);
+		getConversation.mockResolvedValueOnce(conversation);
+		const session = createChatSession({ initialConversationPage, onMessagesChanged: vi.fn() });
+		await session.selectConversation(conversation.id);
+
+		session.syncRouteConversation(null);
+
+		expect(session.activeConversationId).toBeNull();
+		expect(session.messages).toEqual([]);
+	});
+
+	it('returns an unavailable route to a new chat after an ownership-safe 404', async () => {
+		const onConversationUnavailable = vi.fn();
+		getConversation.mockRejectedValueOnce({ status: 404 });
+		const session = createChatSession({
+			initialConversationPage,
+			onMessagesChanged: vi.fn(),
+			onConversationUnavailable
+		});
+
+		await session.selectConversation(initialConversationPage.conversations[0].id);
+
+		expect(session.activeConversationId).toBeNull();
+		expect(session.conversationLoading).toBe(false);
+		expect(session.statusMessage).toBe('Konversationen kunde inte öppnas.');
+		expect(onConversationUnavailable).toHaveBeenCalledOnce();
+	});
+
 	it('returns to history after deleting a conversation opened from history', async () => {
 		const conversation = detail(initialConversationPage.conversations[0]);
 		getConversation.mockResolvedValueOnce(conversation);
@@ -131,7 +253,7 @@ describe('ChatSession.selectConversation', () => {
 
 		session.openHistory();
 		await session.selectConversation(conversation.id);
-		await session.deleteConversation();
+		await expect(session.deleteConversation()).resolves.toBe(true);
 
 		expect(session.activeConversationId).toBeNull();
 		expect(session.historyOpen).toBe(true);
@@ -144,7 +266,7 @@ describe('ChatSession.selectConversation', () => {
 		const session = createChatSession({ initialConversationPage, onMessagesChanged: vi.fn() });
 
 		await session.selectConversation(conversation.id);
-		await session.deleteConversation();
+		await expect(session.deleteConversation()).resolves.toBe(true);
 
 		expect(session.activeConversationId).toBeNull();
 		expect(session.historyOpen).toBe(false);

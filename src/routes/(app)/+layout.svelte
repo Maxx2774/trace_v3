@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import Button from '$lib/components/ui/Button.svelte';
+	import { getChatUrlState } from '$lib/features/chat/chat-url';
 	import ConversationSheet from '$lib/features/chat/components/ConversationSheet.svelte';
 	import AppSidebar from '$lib/features/home/AppSidebar.svelte';
 	import { onMount, untrack } from 'svelte';
@@ -8,9 +10,20 @@
 
 	let { data, children }: LayoutProps = $props();
 	let sidebarOpen = $state(untrack(() => data.sidebarOpen));
-	let chatOpen = $state(false);
+	let chatOpen = $state(untrack(() => isSelectedChatState(page.url)));
 	let navigationIsOverlay = $state(false);
 	let chatAvailable = $derived(page.url.pathname !== '/settings');
+
+	afterNavigate(({ to }) => {
+		if (to?.route.id?.startsWith('/(app)') && to.route.id !== '/(app)/settings') {
+			if (isSelectedChatState(to.url)) setChat(true);
+		}
+	});
+
+	function isSelectedChatState(url: URL): boolean {
+		const state = getChatUrlState(url);
+		return state.view === 'conversation' || state.view === 'conversations';
+	}
 
 	function setSidebar(open: boolean) {
 		sidebarOpen = open;
