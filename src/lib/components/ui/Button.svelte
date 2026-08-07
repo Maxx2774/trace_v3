@@ -6,7 +6,7 @@
 	type Props = Omit<HTMLButtonAttributes, 'children'> & {
 		children?: Snippet;
 		variant?: 'primary' | 'secondary' | 'ghost';
-		size?: 'md' | 'lg';
+		size?: 'compact' | 'md' | 'lg';
 		collapseLabel?: boolean;
 		leadingIcon?: Icon;
 	};
@@ -25,6 +25,7 @@
 	class={[
 		'button',
 		variant,
+		size === 'compact' && 'compact',
 		size === 'lg' && 'lg',
 		children ? 'with-label' : 'icon-only',
 		collapseLabel && 'label-collapsed'
@@ -69,6 +70,15 @@
 		font-size: 1.05rem;
 	}
 
+	.button.compact {
+		--icon-size: 1.1rem;
+		height: 2rem;
+		gap: 0.35rem;
+		border-radius: 0.55rem;
+		padding-inline: 0.65rem;
+		font-size: 0.86rem;
+	}
+
 	.button-label {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
@@ -109,6 +119,16 @@
 	.button.lg.icon-only {
 		width: 2.75rem;
 		flex-basis: 2.75rem;
+	}
+
+	.button.compact.label-collapsed,
+	.button.compact.icon-only {
+		min-width: 2rem;
+	}
+
+	.button.compact.icon-only {
+		width: 2rem;
+		flex-basis: 2rem;
 	}
 
 	.primary {

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import EditIcon from '$lib/components/icons/EditIcon.svelte';
+	import Button from '$lib/components/ui/Button.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 	import {
 		MEAL_TYPE_OPTIONS,
@@ -288,27 +289,40 @@
 	{/if}
 
 	{#if editable}
-		<button
-			class="edit-button"
-			type="button"
-			disabled={saving}
-			onclick={editing ? finishEditing : beginEditing}
-		>
-			{#if !editing}<EditIcon />{/if}
-			<span>{editing ? 'Klar' : 'Redigera'}</span>
-		</button>
+		<div class={['edit-button', editing && 'editing']}>
+			{#if editing}
+				<Button
+					variant="ghost"
+					size="compact"
+					type="button"
+					disabled={saving}
+					onclick={finishEditing}>Klar</Button
+				>
+			{:else}
+				<Button
+					variant="ghost"
+					size="compact"
+					type="button"
+					leadingIcon={EditIcon}
+					aria-label="Redigera måltid"
+					disabled={saving}
+					onclick={beginEditing}
+				/>
+			{/if}
+		</div>
 	{/if}
 </article>
 
 <style>
 	.meal-card {
-		width: var(--meal-card-width, min(88%, 28rem));
+		position: relative;
+		width: var(--meal-card-width, min(80%, 32rem));
 		align-self: flex-start;
 		box-sizing: border-box;
 		border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
 		border-radius: 1rem;
 		padding: 0.8rem 1rem 0.75rem;
-		background: color-mix(in srgb, var(--accent) 7%, var(--background));
+		background: var(--background);
 		color: var(--text);
 	}
 
@@ -348,7 +362,6 @@
 
 	.change-time-button,
 	.add-item-button,
-	.edit-button,
 	.edit-error button {
 		border: 0;
 		padding: 0;
@@ -369,17 +382,30 @@
 	}
 
 	.edit-button {
-		--icon-size: 0.95em;
-		display: inline-flex;
-		min-height: 2rem;
-		align-items: center;
-		gap: 0.28rem;
-		margin-top: 0.7rem;
+		position: absolute;
+		top: 0.55rem;
+		right: 0.55rem;
+		z-index: 1;
+		border-radius: 0.55rem;
+		background: var(--background);
+		transition: opacity 160ms ease;
+	}
+
+	@media (hover: hover) and (pointer: fine) {
+		.edit-button:not(.editing) {
+			opacity: 0;
+			pointer-events: none;
+		}
+
+		.meal-card:hover .edit-button,
+		.meal-card:focus-within .edit-button {
+			opacity: 1;
+			pointer-events: auto;
+		}
 	}
 
 	.change-time-button:hover,
 	.add-item-button:hover,
-	.edit-button:hover,
 	.edit-error button:hover {
 		color: color-mix(in srgb, var(--accent) 76%, var(--text));
 	}
