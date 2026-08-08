@@ -1,5 +1,8 @@
 import type { ConversationDetailPage } from '$lib/features/chat/contracts';
-import { getOwnedConversationPage } from '$lib/server/chat/conversations';
+import {
+	getOwnedConversationPage,
+	replaceProvisionalConversationMetadata
+} from '$lib/server/chat/conversations';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -42,6 +45,43 @@ describe('getOwnedConversationPage', () => {
 			p_before_turn_id: before.turnId,
 			p_turn_limit: 15
 		});
+	});
+});
+
+describe('replaceProvisionalConversationMetadata', () => {
+	it('stores title and category in the same guarded update', async () => {
+		const row = {
+			id: CONVERSATION_ID,
+			title: 'Gröt igår',
+			category: 'meal',
+			created_at: '2026-08-06T10:00:00.000Z',
+			updated_at: '2026-08-06T10:00:01.000Z',
+			last_message_at: '2026-08-06T10:00:00.000Z'
+		};
+		const maybeSingle = vi.fn().mockResolvedValue({ data: row, error: null });
+		const select = vi.fn().mockReturnValue({ maybeSingle });
+		const eqTitle = vi.fn().mockReturnValue({ select });
+		const eqUser = vi.fn().mockReturnValue({ eq: eqTitle });
+		const eqId = vi.fn().mockReturnValue({ eq: eqUser });
+		const update = vi.fn().mockReturnValue({ eq: eqId });
+		const from = vi.fn().mockReturnValue({ update });
+
+		await expect(
+			replaceProvisionalConversationMetadata(
+				{ from } as unknown as SupabaseClient,
+				USER_ID,
+				CONVERSATION_ID,
+				'Jag åt gröt igår',
+				{ title: 'Gröt igår', category: 'meal' }
+			)
+		).resolves.toMatchObject({ id: CONVERSATION_ID, title: 'Gröt igår' });
+
+		expect(update).toHaveBeenCalledWith({
+			title: 'Gröt igår',
+			category: 'meal',
+			updated_at: expect.any(String)
+		});
+		expect(eqTitle).toHaveBeenCalledWith('title', 'Jag åt gröt igår');
 	});
 });
 

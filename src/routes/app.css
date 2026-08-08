@@ -37,6 +37,11 @@
 	--text: #172033;
 	--muted: #7b8493;
 	--accent: oklch(53% 0.072 167);
+	--domain-meal: #43806b;
+	--domain-symptom: #9a6175;
+	--domain-weight: #5f7f9b;
+	--domain-sleep: #6e70a3;
+	--domain-general: #8a929f;
 	--popover-background: #ffffff;
 	--composer-background: #f5f6f7;
 	--chat-panel-background: #f5f6f7;
@@ -69,6 +74,11 @@
 	--text: #f4f1eb;
 	--muted: #a6adb8;
 	--accent: oklch(73% 0.083 167);
+	--domain-meal: #72a895;
+	--domain-symptom: #c18498;
+	--domain-weight: #82a2be;
+	--domain-sleep: #9294c5;
+	--domain-general: #a9b0ba;
 	--popover-background: #1a1a1a;
 	--composer-background: #222222;
 	--chat-panel-background: #171717;

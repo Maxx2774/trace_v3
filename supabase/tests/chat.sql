@@ -44,11 +44,21 @@ begin
 	v_result := public.begin_chat_turn(v_user_id, null, v_turn_id, 'Hej Trace', 120);
 	assert v_result ->> 'status' = 'created', 'begin must create a new turn';
 	v_conversation_id := (v_result #>> '{conversation,id}')::uuid;
+	assert (
+		select category from public.conversations where id = v_conversation_id
+	) = 'general', 'new conversations must start with the safe general category';
 	v_first_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
 	assert (select count(*) from public.turns where id = v_turn_id) = 1,
 		'begin must create exactly one lifecycle row';
 	assert (select count(*) from public.messages where turn_id = v_turn_id and role = 'user') = 1,
 		'begin must create exactly one user message';
+
+	begin
+		update public.conversations set category = 'unsupported' where id = v_conversation_id;
+		assert false, 'conversation categories outside the canonical set must be rejected';
+	exception when check_violation then
+		null;
+	end;
 
 	v_result := public.begin_chat_turn(v_user_id, v_conversation_id, v_turn_id, 'Hej Trace', 120);
 	assert v_result ->> 'status' = 'pending', 'a valid processing lease must return pending';

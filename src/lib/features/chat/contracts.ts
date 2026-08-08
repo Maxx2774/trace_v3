@@ -12,9 +12,14 @@ export const CONVERSATION_HISTORY_TURN_PAGE_SIZE = 15;
 
 export type ChatRole = 'user' | 'assistant';
 
+export const CONVERSATION_CATEGORIES = ['meal', 'symptom', 'sleep', 'weight', 'general'] as const;
+
+export type ConversationCategory = (typeof CONVERSATION_CATEGORIES)[number];
+
 export type ConversationSummary = {
 	id: string;
 	title: string;
+	category?: ConversationCategory;
 	createdAt: string;
 	updatedAt: string;
 	lastMessageAt: string;
@@ -106,10 +111,14 @@ export function upsertConversation(
 	conversation: ConversationSummary
 ): ConversationSummary[] {
 	const current = conversations.find((item) => item.id === conversation.id);
+	const mergedConversation = {
+		...conversation,
+		category: conversation.category ?? current?.category ?? 'general'
+	};
 	const newestConversation =
 		current && Date.parse(current.updatedAt) > Date.parse(conversation.updatedAt)
 			? current
-			: conversation;
+			: mergedConversation;
 
 	return [newestConversation, ...conversations.filter((item) => item.id !== conversation.id)].sort(
 		(left, right) =>

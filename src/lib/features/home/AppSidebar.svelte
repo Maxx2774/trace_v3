@@ -2,11 +2,11 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import Wordmark from '$lib/components/brand/Wordmark.svelte';
-	import ChevronRightIcon from '$lib/components/icons/ChevronRightIcon.svelte';
 	import JournalActiveIcon from '$lib/components/icons/JournalActiveIcon.svelte';
 	import JournalIcon from '$lib/components/icons/JournalIcon.svelte';
 	import OverviewActiveIcon from '$lib/components/icons/OverviewActiveIcon.svelte';
 	import OverviewIcon from '$lib/components/icons/OverviewIcon.svelte';
+	import PanelLeftIcon from '$lib/components/icons/PanelLeftIcon.svelte';
 	import AccountMenu from '$lib/features/auth/AccountMenu.svelte';
 	import { getPrimaryNavigationUrl } from '$lib/features/chat/chat-url';
 
@@ -32,14 +32,16 @@
 </script>
 
 <button
-	class={['sidebar-tab', open && 'open', chatOpen && 'chat-open']}
+	class={['sidebar-toggle', 'closed-toggle', open && 'sidebar-open', chatOpen && 'chat-open']}
 	type="button"
-	aria-label={open ? 'Stäng sidofält' : 'Öppna sidofält'}
+	aria-label="Öppna sidofält"
 	aria-controls="app-sidebar"
-	aria-expanded={open}
+	aria-expanded="false"
+	aria-hidden={open}
+	tabindex={open ? -1 : undefined}
 	onclick={onToggle}
 >
-	<span class={['tab-icon', open && 'open']}><ChevronRightIcon /></span>
+	<PanelLeftIcon />
 </button>
 
 <button
@@ -57,7 +59,19 @@
 	aria-hidden={!open}
 	inert={!open}
 >
-	<div class="sidebar-wordmark"><Wordmark /></div>
+	<div class="sidebar-header">
+		<div class="sidebar-wordmark"><Wordmark /></div>
+		<button
+			class="sidebar-toggle open-toggle"
+			type="button"
+			aria-label="Stäng sidofält"
+			aria-controls="app-sidebar"
+			aria-expanded="true"
+			onclick={onToggle}
+		>
+			<PanelLeftIcon />
+		</button>
+	</div>
 
 	<nav aria-label="Trace">
 		<a
@@ -82,53 +96,46 @@
 </aside>
 
 <style>
-	.sidebar-tab {
-		--icon-size: 1.1rem;
-		position: fixed;
-		top: 90%;
-		left: 0;
-		z-index: 170;
+	.sidebar-toggle {
+		--icon-size: 1.5rem;
 		display: grid;
-		width: calc(1.5rem + 1px);
-		height: 3rem;
+		width: 2.5rem;
+		height: 2.5rem;
 		place-items: center;
 		box-sizing: border-box;
-		border: 1px solid var(--border);
-		border-left: 0;
-		border-radius: 0 0.5rem 0.5rem 0;
+		border: 0;
+		border-radius: 0.7rem;
 		padding: 0;
-		background: var(--background);
-		box-shadow: 0.2rem 0 0.65rem rgb(23 32 51 / 8%);
+		background: transparent;
 		color: color-mix(in srgb, var(--text) 58%, transparent);
 		cursor: pointer;
-		transform: translateY(-50%);
 		transition:
-			color 160ms ease,
-			left 280ms var(--sidebar-easing);
+			background 150ms ease,
+			color 150ms ease,
+			opacity 120ms ease;
 	}
 
-	.sidebar-tab.open {
-		left: var(--sidebar-width);
-	}
-
-	.sidebar-tab:hover,
-	.sidebar-tab:active {
+	.sidebar-toggle:hover,
+	.sidebar-toggle:active {
+		background: var(--surface-hover);
 		color: var(--text);
 	}
 
-	.tab-icon {
-		display: grid;
-		place-items: center;
-		transition: transform 280ms var(--sidebar-easing);
-	}
-
-	.tab-icon.open {
-		transform: rotate(180deg);
-	}
-
-	.sidebar-tab:focus-visible {
+	.sidebar-toggle:focus-visible {
 		outline: 2px solid color-mix(in srgb, var(--text) 42%, transparent);
 		outline-offset: 2px;
+	}
+
+	.closed-toggle {
+		position: fixed;
+		top: 1rem;
+		left: 1rem;
+		z-index: 170;
+	}
+
+	.closed-toggle.sidebar-open {
+		opacity: 0;
+		pointer-events: none;
 	}
 
 	.backdrop {
@@ -164,11 +171,43 @@
 		transform: translate3d(0, 0, 0);
 	}
 
+	.sidebar-header {
+		position: relative;
+		height: 2.5rem;
+		flex: 0 0 2.5rem;
+	}
+
+	.sidebar-wordmark,
+	.open-toggle {
+		position: absolute;
+		top: 0;
+		left: 0.25rem;
+		transition: opacity 120ms ease;
+	}
+
 	.sidebar-wordmark {
 		display: flex;
+		left: 0;
 		height: 2.5rem;
 		align-items: center;
 		padding-left: 0.9rem;
+	}
+
+	.open-toggle {
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	.sidebar:hover .sidebar-wordmark,
+	.sidebar-header:focus-within .sidebar-wordmark {
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	.sidebar:hover .open-toggle,
+	.sidebar-header:focus-within .open-toggle {
+		opacity: 1;
+		pointer-events: auto;
 	}
 
 	nav {
@@ -216,15 +255,17 @@
 	}
 
 	@media (max-width: 1199px) {
-		.sidebar-tab.open {
-			left: min(var(--sidebar-width), calc(100vw - 3rem));
+		.closed-toggle {
+			z-index: 210;
 		}
 
 		.sidebar {
+			z-index: 200;
 			width: min(var(--sidebar-width), calc(100vw - 3rem));
 		}
 
 		.backdrop {
+			z-index: 190;
 			display: block;
 		}
 
@@ -235,16 +276,9 @@
 	}
 
 	@media (max-width: 767px) {
-		.sidebar-tab.chat-open {
+		.closed-toggle.chat-open {
 			display: none;
 		}
-	}
-
-	:global(:root[data-theme='dark']) .sidebar-tab {
-		border-color: var(--surface-border);
-		background: var(--popover-background);
-		box-shadow: 0.2rem 0 0.75rem rgb(0 0 0 / 38%);
-		color: color-mix(in srgb, var(--text) 68%, transparent);
 	}
 
 	:global(:root[data-theme='dark']) .sidebar {

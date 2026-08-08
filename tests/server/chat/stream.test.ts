@@ -70,7 +70,7 @@ describe('createChatResponseStream', () => {
 			{
 				orchestrateChatTurn: orchestrate as never,
 				generateConversationTitle: vi.fn() as never,
-				replaceProvisionalConversationTitle: vi.fn() as never
+				replaceProvisionalConversationMetadata: vi.fn() as never
 			}
 		);
 

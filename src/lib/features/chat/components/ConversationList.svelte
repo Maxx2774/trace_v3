@@ -10,6 +10,7 @@
 	import type { Attachment } from 'svelte/attachments';
 	import { getConversationDatePresentation } from '../conversation-date';
 	import type { ConversationSummary } from '../contracts';
+	import ConversationCategoryIcon from './ConversationCategoryIcon.svelte';
 
 	type ConversationGroup = {
 		key: string;
@@ -161,6 +162,7 @@
 	<div class="loading-skeletons" role="status" aria-label={label}>
 		{#each skeletonRows as row (row.id)}
 			<div class="skeleton-row">
+				<Skeleton width="1.2rem" height="1.2rem" radius="0.3rem" />
 				<Skeleton width={row.titleWidth} height="1.25rem" />
 				<Skeleton width="3.25rem" height="1.25rem" />
 			</div>
@@ -184,6 +186,7 @@
 					void saveRenamedConversation();
 				}}
 			>
+				<ConversationCategoryIcon category={conversation.category} filledOnHover />
 				<input
 					bind:this={renameInput}
 					bind:value={renameTitle}
@@ -204,7 +207,8 @@
 			</form>
 		{:else}
 			<button class="conversation-button" type="button" onclick={() => onSelect(conversation.id)}>
-				<span>{conversation.title}</span>
+				<ConversationCategoryIcon category={conversation.category} filledOnHover />
+				<span class="conversation-title">{conversation.title}</span>
 				<time datetime={conversation.lastMessageAt}>{dateLabel}</time>
 			</button>
 		{/if}
@@ -312,8 +316,8 @@
 		margin: 0;
 		padding: 0.25rem 0.65rem 0.2rem;
 		color: var(--muted);
-		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
-		font-size: 1.05rem;
+		font-family: 'General Sans', ui-sans-serif, system-ui, sans-serif;
+		font-size: 1rem;
 		font-weight: 400;
 		line-height: 1.25;
 	}
@@ -342,6 +346,14 @@
 		background: color-mix(in srgb, var(--text) 5%, transparent);
 	}
 
+	li:hover,
+	li:focus-within,
+	li.menu-open,
+	li.editing {
+		--conversation-category-outline-opacity: 0;
+		--conversation-category-filled-opacity: 1;
+	}
+
 	.conversation-button {
 		border: 0;
 		background: transparent;
@@ -354,15 +366,15 @@
 		grid-column: 1 / -1;
 		grid-row: 1;
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-columns: auto minmax(0, 1fr) auto;
 		align-items: center;
 		min-width: 0;
-		gap: 0.75rem;
+		gap: 0.6rem;
 		padding: 0.3rem 0.65rem;
 		text-align: left;
 	}
 
-	.conversation-button span {
+	.conversation-title {
 		overflow: hidden;
 		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
 		font-size: 1rem;
@@ -379,7 +391,9 @@
 		align-items: center;
 		grid-column: 1 / -1;
 		grid-row: 1;
+		grid-template-columns: auto minmax(0, 1fr);
 		box-sizing: border-box;
+		gap: 0.6rem;
 		padding: 0.3rem 0.65rem;
 	}
 
@@ -405,10 +419,9 @@
 	time {
 		transition: opacity 120ms ease;
 		color: var(--muted);
-		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+		font-family: 'General Sans', ui-sans-serif, system-ui, sans-serif;
 		font-size: 1rem;
 		font-weight: 400;
-		font-variant-numeric: tabular-nums;
 		line-height: 1.25;
 		white-space: nowrap;
 	}
@@ -496,9 +509,9 @@
 		display: grid;
 		min-height: 2.25rem;
 		align-items: center;
-		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-columns: auto minmax(0, 1fr) auto;
 		box-sizing: border-box;
-		gap: 0.75rem;
+		gap: 0.6rem;
 		padding: 0.4rem 0.65rem;
 	}
 

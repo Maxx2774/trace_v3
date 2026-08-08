@@ -1,6 +1,7 @@
 import {
 	differenceInCalendarDays,
 	formatCalendarDate,
+	formatSwedishLongDate,
 	getLocalDate,
 	getLocalDateTime,
 	getLocalTime,
@@ -36,5 +37,9 @@ describe('date and time utilities', () => {
 	it('compares and formats date-only calendar values without timezone drift', () => {
 		expect(differenceInCalendarDays('2026-08-06', '2026-08-04')).toBe(2);
 		expect(formatCalendarDate('2026-08-04', { weekday: 'long' })).toBe('tisdag');
+	});
+
+	it('formats the shared Swedish page date', () => {
+		expect(formatSwedishLongDate(new Date(2026, 7, 8, 12))).toBe('Lördag 8 augusti');
 	});
 });

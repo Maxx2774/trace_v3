@@ -3,6 +3,9 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import type { PathnameWithSearchOrHash } from '$app/types';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import { formatSwedishLongDate } from '$lib/date-time';
+	import { groupMealsByDate } from '$lib/features/journal/meal-groups';
 	import MealCard from '$lib/features/meals/components/MealCard.svelte';
 	import type { Meal } from '$lib/features/meals/contracts';
 	import type { PageProps } from './$types';
@@ -10,7 +13,9 @@
 	type JournalTab = 'all' | 'meals';
 
 	let { data }: PageProps = $props();
+	const date = formatSwedishLongDate(new Date());
 	let meals = $derived(data.meals);
+	let mealGroups = $derived(groupMealsByDate(meals));
 	let activeTab = $derived<JournalTab>(
 		page.url.searchParams.get('tab') === 'meals' ? 'meals' : 'all'
 	);
@@ -36,7 +41,7 @@
 
 <main class="journal-page">
 	<header>
-		<h1>Journal</h1>
+		<PageHeader title="Journal" subtitle={date} />
 		<nav class="tabs" aria-label="Journalfilter">
 			<a
 				class:active={activeTab === 'all'}
@@ -56,18 +61,27 @@
 
 	<section
 		class="journal-content"
+		hidden={activeTab === 'meals'}
 		aria-label={activeTab === 'meals' ? 'Måltider' : 'Alla journalposter'}
 	>
 		{#if meals.length > 0}
-			<div class="meal-list">
-				{#each meals as meal (meal.id)}
-					<MealCard
-						{meal}
-						editable
-						editorPresentation="inline"
-						onUpdated={handleMealUpdated}
-						onReloadRequested={() => void invalidateAll()}
-					/>
+			<div class="meal-groups">
+				{#each mealGroups as group (group.key)}
+					<section class="meal-group" aria-labelledby={`meal-group-${group.key}`}>
+						<h2 id={`meal-group-${group.key}`}>{group.label}</h2>
+						<div class="meal-list">
+							{#each group.meals as meal (meal.id)}
+								<MealCard
+									{meal}
+									editable
+									editorPresentation="inline"
+									variant="journal"
+									onUpdated={handleMealUpdated}
+									onReloadRequested={() => void invalidateAll()}
+								/>
+							{/each}
+						</div>
+					</section>
 				{/each}
 			</div>
 		{:else}
@@ -103,22 +117,15 @@
 		gap: 1.5rem;
 	}
 
-	h1 {
-		margin: 0;
-		color: var(--text);
-		font-size: clamp(1.6rem, 2.5vw, 2rem);
-		font-weight: 400;
-		letter-spacing: normal;
-		line-height: 1.2;
-	}
-
 	.tabs {
 		display: flex;
-		width: 100%;
+		width: calc(100% + 1rem);
 		align-items: center;
+		box-sizing: border-box;
 		gap: 0.25rem;
-		border-bottom: 1px solid var(--border);
+		margin: -0.5rem;
 		overflow-x: auto;
+		padding: 0.5rem;
 		scrollbar-width: none;
 	}
 
@@ -128,14 +135,20 @@
 
 	.tabs a,
 	.tabs button {
+		display: inline-flex;
+		height: 2rem;
+		align-items: center;
+		justify-content: center;
+		box-sizing: border-box;
 		position: relative;
 		flex: 0 0 auto;
-		border: 0;
-		padding: 0.65rem 0.8rem 0.75rem;
+		border: 1px solid transparent;
+		border-radius: 0.55rem;
+		padding: 0 0.65rem;
 		background: transparent;
 		color: var(--muted);
 		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
-		font-size: 0.95rem;
+		font-size: 1rem;
 		font-weight: 435;
 		line-height: 1.2;
 		text-decoration: none;
@@ -143,23 +156,11 @@
 
 	.tabs a {
 		cursor: pointer;
-		transition: color 150ms ease;
-	}
-
-	.tabs a::after {
-		position: absolute;
-		right: 0.75rem;
-		bottom: -1px;
-		left: 0.75rem;
-		height: 2px;
-		border-radius: 999px;
-		background: currentColor;
-		content: '';
-		opacity: 0;
-		transform: scaleX(0.6);
 		transition:
-			opacity 150ms ease,
-			transform 150ms ease;
+			background 150ms ease,
+			border-color 150ms ease,
+			box-shadow 150ms ease,
+			color 150ms ease;
 	}
 
 	.tabs a:hover,
@@ -167,9 +168,10 @@
 		color: var(--text);
 	}
 
-	.tabs a.active::after {
-		opacity: 1;
-		transform: scaleX(1);
+	.tabs a.active {
+		border-color: var(--border);
+		background: var(--surface-hover);
+		box-shadow: 0 0.16rem 0.5rem rgb(23 32 51 / 7%);
 	}
 
 	.tabs a:focus-visible {
@@ -183,17 +185,45 @@
 		cursor: not-allowed;
 	}
 
+	:global(:root[data-theme='dark']) .tabs a.active {
+		box-shadow: 0 0.16rem 0.5rem rgb(0 0 0 / 24%);
+	}
+
 	.journal-content {
 		width: min(calc(100% - (2.5rem - 1.2rem) / 2), 44rem);
 		margin-left: calc((2.5rem - 1.2rem) / 2);
-		padding-top: 12rem;
+		padding-top: 14rem;
 	}
 
+	.meal-groups,
+	.meal-group,
 	.meal-list {
 		--meal-card-width: 100%;
 		display: flex;
 		width: min(100%, 44rem);
 		flex-direction: column;
+	}
+
+	.meal-groups {
+		gap: 1.5rem;
+	}
+
+	.meal-group {
+		display: grid;
+		gap: 0.5rem;
+	}
+
+	.meal-group h2 {
+		margin: 0;
+		padding: 0.25rem 0.65rem 0.2rem 0;
+		color: var(--muted);
+		font-family: 'General Sans', ui-sans-serif, system-ui, sans-serif;
+		font-size: 1rem;
+		font-weight: 400;
+		line-height: 1.25;
+	}
+
+	.meal-list {
 		gap: 0.75rem;
 	}
 

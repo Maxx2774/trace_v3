@@ -1,4 +1,5 @@
 <script lang="ts">
+	import AddIcon from '$lib/components/icons/AddIcon.svelte';
 	import ArrowIcon from '$lib/components/icons/ArrowIcon.svelte';
 	import { tick } from 'svelte';
 
@@ -57,9 +58,7 @@
 		textarea.style.height = 'auto';
 		const contentHeight = textarea.scrollHeight;
 		const wasMultiline = multiline;
-		const maxTextareaHeight = singleRow
-			? singleRowMaxTextareaHeight
-			: defaultMaxTextareaHeight;
+		const maxTextareaHeight = singleRow ? singleRowMaxTextareaHeight : defaultMaxTextareaHeight;
 		const contentWraps = contentHeight > singleLineHeight + singleLineTolerance;
 		const nextMultiline = singleRow
 			? textarea.value.length > 0 && (multiline || contentWraps)
@@ -123,6 +122,9 @@
 		{disabled}
 		onclick={() => textarea?.focus()}
 	></button>
+	<button class="add-button" type="button" aria-label="Lägg till">
+		<AddIcon />
+	</button>
 	<label class="sr-only" for="conversation-message">Meddelande till Trace</label>
 	{#if message.length === 0}
 		<span class="visual-placeholder" aria-hidden="true">Skriv till Trace</span>
@@ -181,6 +183,7 @@
 
 	form.single-row {
 		max-height: 15.5rem;
+		grid-template-columns: minmax(0, 1fr) auto;
 		grid-template-rows: minmax(2.5rem, auto);
 		padding: 0.35rem 0.45rem;
 	}
@@ -237,7 +240,7 @@
 		margin-right: 0;
 		padding-block: 0.1125rem;
 		padding-right: 0.5rem;
-		padding-left: 0.7rem;
+		padding-left: calc(2.65rem - 1px);
 	}
 
 	form.single-row.multiline textarea {
@@ -246,6 +249,7 @@
 		grid-column: 1 / -1;
 		grid-row: 1;
 		margin-right: 0;
+		padding-left: 0.7rem;
 	}
 
 	.visual-placeholder {
@@ -262,8 +266,53 @@
 
 	form.single-row .visual-placeholder {
 		top: 50%;
-		left: 1.15rem;
+		left: calc(3.1rem - 1px);
 		transform: translateY(-50%);
+	}
+
+	.add-button {
+		--icon-size: 1.2rem;
+
+		position: relative;
+		z-index: 3;
+		display: inline-flex;
+		width: 2.5rem;
+		height: 2.5rem;
+		align-items: center;
+		justify-content: center;
+		align-self: end;
+		grid-column: 1;
+		grid-row: 2;
+		justify-self: start;
+		box-sizing: border-box;
+		border: 0;
+		border-radius: 999px;
+		padding: 0;
+		background: transparent;
+		color: color-mix(in srgb, var(--muted) 78%, transparent);
+		cursor: pointer;
+		transition:
+			background 140ms ease,
+			color 140ms ease;
+	}
+
+	form.single-row .add-button {
+		position: absolute;
+		top: calc(0.35rem + 2px);
+		left: calc(0.45rem + 1.8px);
+		width: 2.25rem;
+		height: 2.25rem;
+		align-self: auto;
+		grid-column: auto;
+		grid-row: auto;
+		justify-self: auto;
+	}
+
+	.add-button:hover,
+	.add-button:focus-visible,
+	.add-button:active {
+		background: color-mix(in srgb, var(--text) 5%, transparent);
+		color: var(--text);
 	}
 
 	.submit-button {
@@ -293,11 +342,22 @@
 	}
 
 	form.single-row .submit-button {
+		--icon-size: 1.125rem;
+
+		align-self: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		grid-column: 2;
 		grid-row: 1;
 	}
 
 	form.single-row.multiline .submit-button {
 		grid-row: 2;
+	}
+
+	form.single-row.multiline .add-button {
+		top: auto;
+		bottom: calc(0.4rem + 2px);
 	}
 
 	.submit-button:hover {

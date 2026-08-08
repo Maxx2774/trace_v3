@@ -1,7 +1,7 @@
 import type { ChatStreamEvent } from '$lib/features/chat/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type OpenAI from 'openai';
-import { replaceProvisionalConversationTitle } from './conversations';
+import { replaceProvisionalConversationMetadata } from './conversations';
 import { orchestrateChatTurn } from './orchestrator';
 import { generateConversationTitle } from './title';
 import type { BeginChatTurnResult } from './turns';
@@ -28,11 +28,11 @@ export function createChatResponseStream(
 	dependencies: {
 		orchestrateChatTurn: typeof orchestrateChatTurn;
 		generateConversationTitle: typeof generateConversationTitle;
-		replaceProvisionalConversationTitle: typeof replaceProvisionalConversationTitle;
+		replaceProvisionalConversationMetadata: typeof replaceProvisionalConversationMetadata;
 	} = {
 		orchestrateChatTurn,
 		generateConversationTitle,
-		replaceProvisionalConversationTitle
+		replaceProvisionalConversationMetadata
 	}
 ): ReadableStream<Uint8Array> {
 	const controller = new AbortController();
@@ -72,22 +72,22 @@ export function createChatResponseStream(
 
 						const provisionalTitle = begin.conversation.title;
 						try {
-							const generatedTitle = await dependencies.generateConversationTitle(
+							const generated = await dependencies.generateConversationTitle(
 								input.userMessage,
 								input.userId,
 								controller.signal
 							);
-							if (!generatedTitle || generatedTitle === provisionalTitle) {
+							if (!generated) {
 								return committed.conversation;
 							}
 
 							return (
-								(await dependencies.replaceProvisionalConversationTitle(
+								(await dependencies.replaceProvisionalConversationMetadata(
 									input.adminClient,
 									input.userId,
 									committed.conversation.id,
 									provisionalTitle,
-									generatedTitle
+									generated
 								)) ?? committed.conversation
 							);
 						} catch (error) {

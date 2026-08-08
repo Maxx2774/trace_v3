@@ -4,6 +4,7 @@ import { upsertConversation, type ConversationSummary } from '$lib/features/chat
 const conversation: ConversationSummary = {
 	id: '10000000-0000-4000-8000-000000000000',
 	title: 'Provisorisk titel',
+	category: 'meal',
 	createdAt: '2026-08-06T10:00:00.000Z',
 	updatedAt: '2026-08-06T10:00:01.000Z',
 	lastMessageAt: '2026-08-06T10:00:01.000Z'
@@ -28,5 +29,18 @@ describe('upsertConversation', () => {
 		};
 
 		expect(upsertConversation([manuallyRenamed], conversation)[0]).toEqual(manuallyRenamed);
+	});
+
+	it('preserves a cached category when a lifecycle RPC omits it', () => {
+		const updated = {
+			...conversation,
+			category: undefined,
+			updatedAt: '2026-08-06T10:00:02.000Z'
+		};
+
+		expect(upsertConversation([conversation], updated)[0]).toEqual({
+			...updated,
+			category: 'meal'
+		});
 	});
 });

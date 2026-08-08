@@ -3,6 +3,7 @@
 	import type { Attachment } from 'svelte/attachments';
 	import CheckmarkIcon from '$lib/components/icons/CheckmarkIcon.svelte';
 	import EditIcon from '$lib/components/icons/EditIcon.svelte';
+	import MealIcon from '$lib/components/icons/MealIcon.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 	import { getRevealMotion } from '$lib/motion';
@@ -41,12 +42,14 @@
 		meal,
 		editable = false,
 		editorPresentation = 'overlay',
+		variant = 'chat',
 		onUpdated,
 		onReloadRequested
 	}: {
 		meal: Meal;
 		editable?: boolean;
 		editorPresentation?: 'overlay' | 'inline';
+		variant?: 'chat' | 'journal';
 		onUpdated?: (meal: Meal) => void;
 		onReloadRequested?: () => void;
 	} = $props();
@@ -81,6 +84,7 @@
 			? timeLabel
 			: `${mealTypeLabel(meal.mealType)} ${lowercaseFirstLetter(timeLabel)}`
 	);
+	let journalMealTypeLabel = $derived(meal.mealType === null ? '' : mealTypeLabel(meal.mealType));
 	let overlayStyle = $derived(
 		overlayBounds
 			? `--meal-overlay-left: ${overlayBounds.left}px; --meal-overlay-top: ${overlayBounds.top}px; --meal-overlay-width: ${overlayBounds.width}px; --meal-overlay-height: ${overlayBounds.height}px; --meal-overlay-center-y: ${overlayBounds.centerY}px; --meal-overlay-card-left: ${overlayBounds.cardLeft}px; --meal-overlay-card-width: ${overlayBounds.cardWidth}px;`
@@ -381,14 +385,44 @@
 
 <svelte:window onresize={handleWindowResize} onkeydown={handleWindowKeydown} />
 
+{#snippet mealEditButton()}
+	<Button
+		variant="ghost"
+		size="compact"
+		type="button"
+		style="--icon-size: 18px; color: color-mix(in srgb, var(--text) 58%, transparent); transition: none;"
+		leadingIcon={EditIcon}
+		aria-label="Redigera måltid"
+		disabled={saving}
+		onclick={beginEditing}
+	/>
+{/snippet}
+
 {#snippet mealItems(editMode: boolean)}
+	{#if !editMode && variant === 'journal'}
+		<div class="journal-heading">
+			<span class="journal-kind">
+				<span class="journal-kind-icon"><MealIcon /></span>
+				<span>Måltid</span>
+			</span>
+			<span class="journal-meta">
+				<span class="journal-time-label"><span>{journalMealTypeLabel}</span></span>
+				{#if editable && !closing}
+					<span class="journal-edit-button">{@render mealEditButton()}</span>
+				{/if}
+			</span>
+		</div>
+	{/if}
 	<div class="items">
 		{#each meal.items as item, index (item.id)}
 			<MealItemSection
 				{item}
 				editing={editMode}
 				{saving}
-				metaLabel={!editMode && index === 0 ? readOnlyMealLabel : null}
+				metaLabel={!editMode && variant === 'chat' && index === 0 ? readOnlyMealLabel : null}
+				metaAction={!editMode && variant === 'chat' && index === 0 && editable && !closing
+					? mealEditButton
+					: undefined}
 				editorActive={editMode && editor !== null}
 				canRemove={meal.items.length > 1}
 				itemDraft={editMode && editor?.kind === 'item' && editor.id === item.id ? editor : null}
@@ -428,7 +462,11 @@
 		></button>
 	{/if}
 	{#if closing}
-		<article class="meal-card view-preview" aria-hidden="true" {@attach trackPreview}>
+		<article
+			class={['meal-card', 'view-preview', variant === 'journal' && 'journal']}
+			aria-hidden="true"
+			{@attach trackPreview}
+		>
 			{@render mealItems(false)}
 		</article>
 	{/if}
@@ -437,6 +475,7 @@
 		{@attach trackCardSize}
 		class={[
 			'meal-card',
+			variant === 'journal' && 'journal',
 			editing && 'editing',
 			closing && 'closing',
 			editButtonSuppressed && 'edit-button-suppressed',
@@ -506,29 +545,17 @@
 			</div>
 		{/if}
 
-		{#if editable}
+		{#if editable && editing}
 			<div class={['edit-button', editing && 'editing']}>
-				{#if editing}
-					<Button
-						variant="ghost"
-						size="compact"
-						type="button"
-						leadingIcon={CheckmarkIcon}
-						aria-label="Avsluta redigering"
-						disabled={saving || closing}
-						onclick={finishEditing}
-					/>
-				{:else}
-					<Button
-						variant="ghost"
-						size="compact"
-						type="button"
-						leadingIcon={EditIcon}
-						aria-label="Redigera måltid"
-						disabled={saving}
-						onclick={beginEditing}
-					/>
-				{/if}
+				<Button
+					variant="ghost"
+					size="compact"
+					type="button"
+					leadingIcon={CheckmarkIcon}
+					aria-label="Avsluta redigering"
+					disabled={saving || closing}
+					onclick={finishEditing}
+				/>
 			</div>
 		{/if}
 	</article>
@@ -550,6 +577,10 @@
 		background: var(--background);
 		box-shadow: 0 0.25rem 0.9rem rgb(23 32 51 / 4%);
 		color: var(--text);
+	}
+
+	.meal-card.journal {
+		border-color: color-mix(in srgb, var(--accent) 6%, transparent);
 	}
 
 	.editing-backdrop {
@@ -591,6 +622,10 @@
 		box-shadow: none;
 	}
 
+	:global(:root[data-theme='dark']) .meal-card.journal {
+		border-color: color-mix(in srgb, var(--accent) 10%, transparent);
+	}
+
 	:global(:root[data-theme='dark']) .meal-card.editing.overlay {
 		box-shadow: 0 1rem 3rem rgb(0 0 0 / 45%);
 	}
@@ -608,6 +643,79 @@
 		font-size: 0.9rem;
 		line-height: 1.3;
 		white-space: nowrap;
+	}
+
+	.journal-heading {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin-bottom: 0.65rem;
+	}
+
+	.journal-kind {
+		--icon-size: 1.15rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+		font-size: 0.95rem;
+		font-weight: 400;
+		line-height: 1.3;
+	}
+
+	.journal-kind-icon {
+		display: inline-flex;
+		color: var(--accent);
+	}
+
+	.journal-meta {
+		position: relative;
+		display: inline-flex;
+		min-width: 2rem;
+		align-items: center;
+		justify-content: flex-end;
+		margin-left: auto;
+	}
+
+	.journal-time-label {
+		position: relative;
+		z-index: 1;
+		margin-right: -0.5rem;
+		padding-right: 0.5rem;
+		background: var(--background);
+		color: var(--muted);
+		font-size: 0.9rem;
+		line-height: 1.3;
+		white-space: nowrap;
+	}
+
+	.journal-time-label::before {
+		position: absolute;
+		top: 50%;
+		right: 0;
+		z-index: 0;
+		width: 100%;
+		min-width: 2rem;
+		height: 2rem;
+		background: var(--background);
+		content: '';
+		transform: translateY(-50%);
+	}
+
+	.journal-time-label > span {
+		position: relative;
+		z-index: 1;
+	}
+
+	.journal-edit-button {
+		position: absolute;
+		top: 50%;
+		right: -0.5rem;
+		z-index: 0;
+		display: inline-flex;
+		pointer-events: none;
+		transform: translateY(-50%);
 	}
 
 	.items {
@@ -655,28 +763,27 @@
 		transition: opacity 160ms ease;
 	}
 
-	.edit-button.editing,
-	.meal-card.multi-item .edit-button {
+	.edit-button.editing {
 		top: 0.5rem;
 		bottom: auto;
 		margin-block: 0;
 	}
 
 	@media (hover: hover) and (pointer: fine) {
-		.edit-button:not(.editing) {
-			opacity: 0;
-			pointer-events: none;
-		}
-
 		.meal-card.editable:hover,
 		.meal-card.editable:focus-within {
-			--meal-meta-opacity: 0;
+			--meal-action-pointer-events: auto;
+			--meal-meta-visibility: hidden;
 		}
 
-		.meal-card:hover .edit-button,
-		.meal-card:focus-within .edit-button {
-			opacity: 1;
+		.meal-card.journal:hover .journal-edit-button,
+		.meal-card.journal:focus-within .journal-edit-button {
 			pointer-events: auto;
+		}
+
+		.meal-card.journal:hover .journal-time-label,
+		.meal-card.journal:focus-within .journal-time-label {
+			visibility: hidden;
 		}
 	}
 

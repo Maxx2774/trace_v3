@@ -3,10 +3,10 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import ChevronRightIcon from '$lib/components/icons/ChevronRightIcon.svelte';
-	import CheckmarkIcon from '$lib/components/icons/CheckmarkIcon.svelte';
 	import ChatHistoryIcon from '$lib/components/icons/ChatHistoryIcon.svelte';
 	import CloseIcon from '$lib/components/icons/CloseIcon.svelte';
 	import DeleteIcon from '$lib/components/icons/DeleteIcon.svelte';
+	import MealIcon from '$lib/components/icons/MealIcon.svelte';
 	import MoreHorizontalIcon from '$lib/components/icons/MoreHorizontalIcon.svelte';
 	import NewConversationIcon from '$lib/components/icons/NewConversationIcon.svelte';
 	import MealCard from '$lib/features/meals/components/MealCard.svelte';
@@ -30,6 +30,7 @@
 	import ChatComposer from './ChatComposer.svelte';
 	import ConversationList from './ConversationList.svelte';
 	import { createChatSession } from '../chat-session.svelte';
+	import ConversationCategoryIcon from './ConversationCategoryIcon.svelte';
 
 	let {
 		open,
@@ -250,9 +251,11 @@
 
 <Sheet {open} onClose={close} label="Trace">
 	<div class={['panel-shell', open && 'mobile-open']} role="dialog" aria-label="Trace-konversation">
-		<button class="close-tab" type="button" aria-label="Stäng Trace" onclick={close}>
-			<ChevronRightIcon />
-		</button>
+		{#if open}
+			<button class="close-tab" type="button" aria-label="Stäng Trace" onclick={close}>
+				<ChevronRightIcon />
+			</button>
+		{/if}
 
 		<div class="panel">
 			<header class="toolbar">
@@ -261,12 +264,12 @@
 						<h2 class="history-title">Konversationer</h2>
 					{:else if conversationActive}
 						<Button
-							variant="secondary"
+							variant="ghost"
 							size="md"
-							leadingIcon={NewConversationIcon}
-							aria-label="Ny chatt"
-							disabled={session.streaming}
-							onclick={startNewConversation}
+							leadingIcon={ChatHistoryIcon}
+							aria-label="Konversationer"
+							aria-expanded={session.historyOpen}
+							onclick={openConversationList}
 						/>
 					{:else}
 						<Button
@@ -294,10 +297,10 @@
 						<Button
 							variant="ghost"
 							size="md"
-							leadingIcon={ChatHistoryIcon}
-							aria-label="Konversationer"
-							aria-expanded={session.historyOpen}
-							onclick={openConversationList}
+							leadingIcon={NewConversationIcon}
+							aria-label="Ny chatt"
+							disabled={session.streaming}
+							onclick={startNewConversation}
 						/>
 
 						<Popover placement="bottom-end" role="menu" width="max-content" yOffset={-12}>
@@ -402,8 +405,8 @@
 											{#if records.length > 0}
 												<div class="turn-records">
 													<p class="registration-status" role="status">
-														<CheckmarkIcon />
-														<span>Registrerat</span>
+														<span class="registration-icon"><MealIcon /></span>
+														<span>Måltid registrerad</span>
 													</p>
 													{#each records as entry (entry.record.value.id)}
 														{#if entry.record.kind === 'meal'}
@@ -466,7 +469,8 @@
 									{#each recentConversations as conversation (conversation.id)}
 										<li>
 											<button type="button" onclick={() => selectConversation(conversation.id)}>
-												<span>{conversation.title}</span>
+												<ConversationCategoryIcon category={conversation.category} filledOnHover />
+												<span class="recent-conversation-title">{conversation.title}</span>
 												<time datetime={conversation.lastMessageAt}>
 													{getRecentConversationDateLabel(conversation.lastMessageAt)}
 												</time>
@@ -573,11 +577,15 @@
 	}
 
 	.history-title {
-		margin: 0 0 0 0.65rem;
+		position: absolute;
+		left: 50%;
+		margin: 0;
+		transform: translateX(-50%);
 		color: var(--text);
 		font-size: 1.4rem;
 		font-weight: 400;
 		line-height: 1.2;
+		pointer-events: none;
 	}
 
 	.fullscreen-close {
@@ -688,9 +696,9 @@
 	.recent-conversations button {
 		display: grid;
 		width: 100%;
-		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-columns: auto minmax(0, 1fr) auto;
 		align-items: center;
-		gap: 0.75rem;
+		column-gap: 0.75rem;
 		box-sizing: border-box;
 		border: 0;
 		border-radius: 0.5rem;
@@ -709,12 +717,16 @@
 	}
 
 	.recent-conversations button:hover,
+	.recent-conversations button:focus-visible,
 	.recent-conversations button:active {
+		--conversation-category-outline-opacity: 0;
+		--conversation-category-filled-opacity: 1;
+
 		background: color-mix(in srgb, var(--text) 5%, transparent);
 		color: var(--text);
 	}
 
-	.recent-conversations span {
+	.recent-conversation-title {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -812,7 +824,7 @@
 		display: flex;
 		align-self: stretch;
 		flex-direction: column;
-		gap: 0.65rem;
+		gap: 0.5rem;
 	}
 
 	.registration-status {
@@ -821,13 +833,18 @@
 		display: inline-flex;
 		align-self: flex-start;
 		align-items: center;
-		gap: 0.2rem;
+		gap: 0.35rem;
 		margin: 0;
-		color: var(--accent);
+		color: var(--text);
 		font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
 		font-size: 1rem;
-		font-weight: 435;
+		font-weight: 400;
 		line-height: 1.3;
+	}
+
+	.registration-icon {
+		display: inline-flex;
+		color: var(--accent);
 	}
 
 	.formulating-status {

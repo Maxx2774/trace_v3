@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import DeleteIcon from '$lib/components/icons/DeleteIcon.svelte';
 	import EditIcon from '$lib/components/icons/EditIcon.svelte';
 	import type { MealIngredient, MealItem } from '../contracts';
@@ -10,6 +11,7 @@
 		editing,
 		saving,
 		metaLabel = null,
+		metaAction,
 		editorActive,
 		canRemove,
 		itemDraft,
@@ -29,6 +31,7 @@
 		editing: boolean;
 		saving: boolean;
 		metaLabel?: string | null;
+		metaAction?: Snippet;
 		editorActive: boolean;
 		canRemove: boolean;
 		itemDraft: MealItemDraft | null;
@@ -43,7 +46,7 @@
 		onSaveItem: (draft: MealItemDraft) => void | Promise<void>;
 		onSaveIngredient: (draft: MealIngredientDraft) => void | Promise<void>;
 		onCancelEditor: () => void;
-		} = $props();
+	} = $props();
 
 	function capitalizeFirstLetter(value: string): string {
 		return value.length === 0 ? value : value[0].toLocaleUpperCase('sv-SE') + value.slice(1);
@@ -73,12 +76,19 @@
 	{:else}
 		<div class="item-row">
 			<p class="item-name">
-				{capitalizeFirstLetter(item.name)}{#if item.amountText}<span> · {item.amountText}</span>{/if}
+				{capitalizeFirstLetter(item.name)}{#if item.amountText}<span>
+						· {item.amountText}</span
+					>{/if}
 				{#if !editing && inlineIngredients}
 					<span class="inline-ingredients"> · {inlineIngredients}</span>
 				{/if}
 			</p>
-			{#if metaLabel}<span class="meta-label">{metaLabel}</span>{/if}
+			{#if metaLabel}
+				<span class="meta">
+					<span class="meta-label"><span>{metaLabel}</span></span>
+					{#if metaAction}<span class="meta-action">{@render metaAction()}</span>{/if}
+				</span>
+			{/if}
 			{#if editing}
 				<div class="row-actions">
 					<button
@@ -113,11 +123,11 @@
 							onSave={(draft) => onSaveIngredient({ ...draft, itemId: item.id })}
 							onCancel={onCancelEditor}
 						/>
-				{:else}
-					<div class="ingredient-row">
-						<span>
-							{lowercaseFirstLetter(ingredient.name)}{#if ingredient.amountText}
-								· {ingredient.amountText}{/if}
+					{:else}
+						<div class="ingredient-row">
+							<span>
+								{lowercaseFirstLetter(ingredient.name)}{#if ingredient.amountText}
+									· {ingredient.amountText}{/if}
 							</span>
 							{#if editing}
 								<div class="row-actions">
@@ -195,14 +205,54 @@
 		font-size: 0.92rem;
 	}
 
-	.meta-label {
+	.meta {
+		position: relative;
+		display: inline-flex;
+		min-width: 2rem;
+		align-items: center;
+		justify-content: flex-end;
 		margin-left: auto;
+	}
+
+	.meta-label {
+		position: relative;
+		z-index: 1;
+		margin-right: -0.5rem;
+		padding-right: 0.5rem;
+		background: var(--background);
 		color: var(--muted);
 		font-size: 0.9rem;
 		line-height: 1.3;
-		opacity: var(--meal-meta-opacity, 1);
+		visibility: var(--meal-meta-visibility, visible);
 		white-space: nowrap;
-		transition: opacity 160ms ease;
+	}
+
+	.meta-label::before {
+		position: absolute;
+		top: 50%;
+		right: 0;
+		z-index: 0;
+		width: 100%;
+		min-width: 2rem;
+		height: 2rem;
+		background: var(--background);
+		content: '';
+		transform: translateY(-50%);
+	}
+
+	.meta-label > span {
+		position: relative;
+		z-index: 1;
+	}
+
+	.meta-action {
+		position: absolute;
+		top: 50%;
+		right: -0.5rem;
+		z-index: 0;
+		display: inline-flex;
+		pointer-events: var(--meal-action-pointer-events, none);
+		transform: translateY(-50%);
 	}
 
 	ul {

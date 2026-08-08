@@ -1,4 +1,5 @@
 import type {
+	ConversationCategory,
 	ConversationCursor,
 	ConversationDetailPage,
 	ConversationHistoryCursor,
@@ -16,6 +17,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 type ConversationRow = {
 	id: string;
 	title: string;
+	category: ConversationCategory;
 	created_at: string;
 	updated_at: string;
 	last_message_at: string;
@@ -71,7 +73,7 @@ export async function listOwnedConversations(
 function selectOwnedConversations(client: SupabaseClient, userId: string) {
 	return client
 		.from('conversations')
-		.select('id,title,created_at,updated_at,last_message_at')
+		.select('id,title,category,created_at,updated_at,last_message_at')
 		.eq('user_id', userId);
 }
 
@@ -148,7 +150,7 @@ export async function renameOwnedConversation(
 		.update({ title, updated_at: new Date().toISOString() })
 		.eq('id', conversationId)
 		.eq('user_id', userId)
-		.select('id,title,created_at,updated_at,last_message_at')
+		.select('id,title,category,created_at,updated_at,last_message_at')
 		.maybeSingle();
 
 	if (error) throw error;
@@ -156,20 +158,24 @@ export async function renameOwnedConversation(
 	return mapConversation(data as ConversationRow);
 }
 
-export async function replaceProvisionalConversationTitle(
+export async function replaceProvisionalConversationMetadata(
 	client: SupabaseClient,
 	userId: string,
 	conversationId: string,
 	provisionalTitle: string,
-	generatedTitle: string
+	generated: { title: string; category: ConversationCategory }
 ): Promise<ConversationSummary | null> {
 	const { data, error } = await client
 		.from('conversations')
-		.update({ title: generatedTitle, updated_at: new Date().toISOString() })
+		.update({
+			title: generated.title,
+			category: generated.category,
+			updated_at: new Date().toISOString()
+		})
 		.eq('id', conversationId)
 		.eq('user_id', userId)
 		.eq('title', provisionalTitle)
-		.select('id,title,created_at,updated_at,last_message_at')
+		.select('id,title,category,created_at,updated_at,last_message_at')
 		.maybeSingle();
 
 	if (error) throw error;
@@ -180,6 +186,7 @@ export function mapConversation(row: ConversationRow): ConversationSummary {
 	return {
 		id: row.id,
 		title: row.title,
+		category: row.category,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 		lastMessageAt: row.last_message_at

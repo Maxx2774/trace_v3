@@ -52,8 +52,8 @@ funktionalitet hör hemma i `product.md`.
   kort absolut datum. När måltidstypen är känd visas den och tidsuppgiften tillsammans,
   exempelvis **Lunch igår**. Framtida datum presenteras aldrig som exempelvis Imorgon.
 - En ren, lyckad måltidsregistrering visas direkt efter användarmeddelandet som
-  **✓ Registrerat** följt av ett strukturerat kort. Appen fortsätter inte AI-svaret för att
-  formulera en separat bekräftelsetext.
+  **Måltid registrerad** med en måltidsikon, följt av ett strukturerat kort. Appen fortsätter
+  inte AI-svaret för att formulera en separat bekräftelsetext.
 - Om samma meddelande även innehåller en faktisk fråga registreras måltiden först och ett
   kort naturligt svar på frågan kan därefter visas efter kortet.
 - Innan en ny måltid sparas jämför servern den med samma användares måltider på samma
@@ -66,7 +66,7 @@ funktionalitet hör hemma i `product.md`.
   Frågan blir besvarbar först när assistantsvaret har sparats och vänteläget överlever en
   omladdning.
 - Ett uttryckligt ja skapar exakt en måltid från det sparade förslaget och visar det vanliga
-  deterministiska **Registrerat** med måltidskort. Ett tydligt nej lämnar måltiden osparad
+  deterministiska **Måltid registrerad** med måltidskort. Ett tydligt nej lämnar måltiden osparad
   och ger ett kort naturligt svar. Ett tydligt byte till ett orelaterat ämne avslutar det
   väntande beslutet innan det nya ämnet besvaras; en faktisk följdfråga eller ett otydligt
   svar får däremot lämna beslutet väntande. Tolkningen görs av modellen utan serverbaserade
@@ -88,9 +88,12 @@ funktionalitet hör hemma i `product.md`.
 - Måltidskort återställs från referenser i den sparade konversationen och batchhydreras med
   den senaste kanoniska revisionen. Startsidan visar ingen separat måltidsöversikt.
 - Journal-sidan visar användarens samtliga sparade måltider från den kanoniska
-  måltidsstrukturen, sorterade efter konsumtionsdatum och tid med poster utan känd tid sist.
+  måltidsstrukturen, grupperade och sorterade efter konsumtionsdag med relativa svenska
+  dagrubriker och poster utan känt datum sist.
   Måltiderna kan redigeras direkt i journalen med samma atomiska och revisionsskyddade
-  serverflöde som används från konversationen.
+  serverflöde som används från konversationen. Journalens måltidskort har en separat
+  presentation med måltidsikon och etiketten **Måltid**, medan chatten behåller sin kompakta
+  kortpresentation.
 
 ## Sparade konversationer
 
@@ -115,6 +118,10 @@ funktionalitet hör hemma i `product.md`.
 - Listan grupperar samtal adaptivt under Idag, Igår, Den här veckan, Förra veckan och
   äldre månadsrubriker. Dagens och gårdagens rader visar tid, veckogrupper visar veckodag
   och tid, och äldre rader visar kort datum utan att upprepa grupprubriken i varje rad.
+- Konversationskategorin visas med en liten Fluent-ikon före titeln i de tre senaste samtalen
+  under skrivfältet och i den fullständiga konversationslistan: mat, puls, sömn, mätare eller
+  chatt. Varje ikon använder sin kategorifärg för Måltid, Symtom, Sömn, Vikt respektive Allmänt
+  och växlar från outline till filled när raden hovras eller får tangentbordsfokus.
 - När en konversation väljs visas konversationsvyn omedelbart med en tom meddelandeyta.
   De senaste 20 hela chattvändorna, normalt upp till 40 meddelanden, tonas in när ett
   sammanslaget serveranrop har hämtat både meddelanden och tillhörande måltidskort.
@@ -130,7 +137,12 @@ funktionalitet hör hemma i `product.md`.
 ## Konversationstitlar
 
 - En ny konversation får först en provisorisk titel från användarens första meddelande.
-- Efter det första sparade AI-svaret genereras en kort titel separat från chattsvaret.
+- Efter det första sparade AI-svaret genereras en kort titel och en konversationskategori
+  tillsammans, separat från chattsvaret och enbart från användarens första textmeddelande.
+- Kategorin sparas på konversationen som **meal**, **symptom**, **sleep**, **weight** eller
+  **general**. Nya och äldre konversationer använder **general** tills en lyckad automatisk
+  klassificering har sparats. Kategorin är metadata; den innebär inte att strukturerad data
+  för exempelvis symtom, sömn eller vikt har registrerats.
 - Den automatiska titeln följer användarens språk, är högst 60 tecken och ska inte lägga
   till diagnoser, orsaker eller andra antaganden.
 - Om titelgenereringen misslyckas behålls den provisoriska titeln.
@@ -140,11 +152,13 @@ funktionalitet hör hemma i `product.md`.
 ## Gränssnitt
 
 - Chatten visas i en responsiv panel med separata vyer för aktuell konversation och historik.
-- Sidofältet har en Journal-vy med flikarna Alla och Måltider. Eftersom måltider är den enda
-  implementerade journaltypen visar båda samma måltidsposter. Flikarna Symtom, Vikt och Sömn
-  visas avstängda tills respektive datatyp finns implementerad.
+- Sidofältet har en Journal-vy med flikarna Alla och Måltider. Alla visar de implementerade
+  måltidsposterna, medan innehållet under Måltider för närvarande är dolt. Flikarna Symtom,
+  Vikt och Sömn visas avstängda tills respektive datatyp finns implementerad.
 - En ny chatt börjar med ett kompakt enkelradigt skrivfält. När texten radbryts får submit-knappen
-  en egen nedersta rad utan text, medan textytan ovanför fortsätter växa upp till sin maxhöjd.
+  och plusknappen en egen nedersta rad utan text, medan textytan ovanför fortsätter växa upp till
+  sin maxhöjd. I en öppen konversation ligger plusknappen kvar längst ner till vänster.
+  Plusknappen är förberedd visuellt men har ännu ingen kopplad åtgärd.
 - Ljust och mörkt tema kan väljas i Inställningar och sparas lokalt i webbläsaren.
 - Laddning av konversationsmeddelanden respekterar `prefers-reduced-motion`.
 

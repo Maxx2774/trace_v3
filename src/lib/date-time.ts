@@ -6,6 +6,15 @@ export type LocalDateTime = {
 const DAY_MS = 86_400_000;
 export const LOCAL_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
+export function formatSwedishLongDate(value: Date): string {
+	const formatted = new Intl.DateTimeFormat('sv-SE', {
+		weekday: 'long',
+		day: 'numeric',
+		month: 'long'
+	}).format(value);
+	return formatted.charAt(0).toLocaleUpperCase('sv-SE') + formatted.slice(1);
+}
+
 export function getLocalDateTime(value: Date, timezone: string): LocalDateTime {
 	const parts = new Intl.DateTimeFormat('sv-SE', {
 		timeZone: timezone,
