@@ -1,6 +1,6 @@
 # Bekräftelse av möjliga måltidsdubletter
 
-Status: planerad.
+Status: implementerad och verifierad.
 
 Relaterad extern feedback finns i
 [`meal-duplicate-confirmation-plan-feedback.md`](meal-duplicate-confirmation-plan-feedback.md).

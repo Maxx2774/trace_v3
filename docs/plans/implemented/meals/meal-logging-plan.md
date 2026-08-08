@@ -1,5 +1,7 @@
 # Måltidsregistrering med skalbar LLM-orkestrering
 
+Status: implementerad och verifierad.
+
 ## Sammanfattning
 
 Implementera första journalcapabilityn som **skapa + visa måltid**, men bygg

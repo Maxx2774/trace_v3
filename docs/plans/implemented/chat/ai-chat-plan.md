@@ -1,7 +1,6 @@
 # Plan för AI-chatt i Trace v3
 
-Status: implementerad och databasmigrerad. Live-verifiering mot OpenAI väntar på lokal
-konfiguration av `SUPABASE_SECRET_KEY` och `TRACE_SAFETY_HMAC_KEY`.
+Status: implementerad och verifierad.
 
 ## Mål
 

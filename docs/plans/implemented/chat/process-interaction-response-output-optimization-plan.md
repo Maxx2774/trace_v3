@@ -1,9 +1,12 @@
 # Minimal function output från `process_interaction_response`
 
-Status: planerad.
+Status: implementerad och verifierad.
+
+Mätresultat och verifieringsutfall finns i
+[`2026-08-08-process-interaction-response-output.md`](../../../architecture/performance/reports/2026-08-08-process-interaction-response-output.md).
 
 Mätning och beslut för denna ändring följer dokumentrutten för mätt chatarbete i
-[`performance/README.md`](../../architecture/performance/README.md).
+[`performance/README.md`](../../../architecture/performance/README.md).
 
 ## Mål
 
