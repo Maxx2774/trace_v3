@@ -568,13 +568,15 @@
 	}
 
 	.meal-card {
+		--meal-card-background: var(--background);
+
 		position: relative;
 		width: 100%;
 		box-sizing: border-box;
 		border: 1px solid color-mix(in srgb, var(--accent) 10%, transparent);
 		border-radius: 1rem;
 		padding: 0.8rem 1rem 0.75rem;
-		background: var(--background);
+		background: var(--meal-card-background);
 		box-shadow: 0 0.25rem 0.9rem rgb(23 32 51 / 4%);
 		color: var(--text);
 	}
@@ -623,7 +625,9 @@
 	}
 
 	:global(:root[data-theme='dark']) .meal-card.journal {
-		border-color: color-mix(in srgb, var(--accent) 10%, transparent);
+		--meal-card-background: color-mix(in srgb, var(--text) 6%, var(--background));
+
+		border-color: color-mix(in srgb, var(--text) 6%, transparent);
 	}
 
 	:global(:root[data-theme='dark']) .meal-card.editing.overlay {
@@ -683,7 +687,7 @@
 		z-index: 1;
 		margin-right: -0.5rem;
 		padding-right: 0.5rem;
-		background: var(--background);
+		background: var(--meal-card-background);
 		color: var(--muted);
 		font-size: 0.9rem;
 		line-height: 1.3;
@@ -698,7 +702,7 @@
 		width: 100%;
 		min-width: 2rem;
 		height: 2rem;
-		background: var(--background);
+		background: var(--meal-card-background);
 		content: '';
 		transform: translateY(-50%);
 	}
@@ -759,7 +763,7 @@
 		height: 2rem;
 		margin-block: auto;
 		border-radius: 0.55rem;
-		background: var(--background);
+		background: var(--meal-card-background);
 		transition: opacity 160ms ease;
 	}
 
