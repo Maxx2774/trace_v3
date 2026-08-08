@@ -18,19 +18,19 @@ import { createMealFromChat, type RecordMealInput } from '$lib/server/meals/meal
 import type { RegisteredTool } from './registry';
 import * as v from 'valibot';
 
-const localTime = v.pipe(v.string(), v.regex(LOCAL_TIME_PATTERN));
-const timeSchema = v.union([
-	v.strictObject({ kind: v.literal('exact'), localTime }),
-	v.strictObject({ kind: v.literal('approximate'), localTime }),
+const localTimeSchema = v.pipe(v.string(), v.regex(LOCAL_TIME_PATTERN));
+const mealOccurrenceTimeSchema = v.union([
+	v.strictObject({ kind: v.literal('exact'), localTime: localTimeSchema }),
+	v.strictObject({ kind: v.literal('approximate'), localTime: localTimeSchema }),
 	v.strictObject({
 		kind: v.literal('period'),
 		value: mealTimePeriodSchema
 	})
 ]);
-const occurrenceSchema = v.pipe(
+const mealOccurrenceSchema = v.pipe(
 	v.strictObject({
 		date: v.nullable(v.pipe(v.string(), v.isoDate())),
-		time: v.nullable(timeSchema)
+		time: v.nullable(mealOccurrenceTimeSchema)
 	}),
 	v.check(
 		(occurrence) => occurrence.date !== null || occurrence.time === null,
@@ -53,7 +53,7 @@ export const foodLogRecordSchema = v.pipe(
 		responseRequired: v.boolean(),
 		mealType: mealTypeSchema,
 		items: v.pipe(v.array(itemSchema), v.minLength(1), v.maxLength(MEAL_LIMITS.maxItems)),
-		occurred: occurrenceSchema
+		occurred: mealOccurrenceSchema
 	}),
 	v.check(
 		(input) => hasAllowedIngredientCount(input.items),
@@ -62,12 +62,12 @@ export const foodLogRecordSchema = v.pipe(
 	v.check((input) => hasAllowedMealPayloadSize(input), 'Måltidsregistreringen är för stor.')
 );
 
-const amountProperty = {
+const nullableAmountJsonSchema = {
 	type: ['string', 'null'],
 	minLength: 1,
 	maxLength: MEAL_LIMITS.maxAmountLength
 } as const;
-const definition = {
+const foodLogRecordDefinition = {
 	type: 'function',
 	name: 'record',
 	description:
@@ -92,7 +92,7 @@ const definition = {
 					additionalProperties: false,
 					properties: {
 						name: { type: 'string', minLength: 1, maxLength: MEAL_LIMITS.maxNameLength },
-						amountText: amountProperty,
+						amountText: nullableAmountJsonSchema,
 						ingredients: {
 							type: 'array',
 							maxItems: MEAL_LIMITS.maxIngredientsPerItem,
@@ -105,7 +105,7 @@ const definition = {
 										minLength: 1,
 										maxLength: MEAL_LIMITS.maxNameLength
 									},
-									amountText: amountProperty
+									amountText: nullableAmountJsonSchema
 								},
 								required: ['name', 'amountText']
 							}
@@ -164,7 +164,7 @@ const definition = {
 
 export const foodLogRecordTool = {
 	key: 'food_log.record',
-	definition,
+	definition: foodLogRecordDefinition,
 	schema: foodLogRecordSchema,
 	policy: { effect: 'write', parallelSafe: true },
 	async execute(context, args) {

@@ -11,7 +11,7 @@ import {
 	type ResponseObligation,
 	type ToolCallPreparation,
 	type ToolCatalog,
-	type ToolOutcomeEffects
+	type ToolExecutionEffects
 } from './tools/registry';
 import type { PendingInteractionBinding } from './interactions';
 import {
@@ -221,7 +221,7 @@ export async function orchestrateChatTurn(
 			);
 			const functionOutputs: OpenAI.Responses.ResponseInputItem.FunctionCallOutput[] = [];
 			let terminalExecutionError = false;
-			const batchEffects: ToolOutcomeEffects[] = [];
+			const batchEffects: ToolExecutionEffects[] = [];
 
 			for (let index = 0; index < preparations.length; index += 1) {
 				const preparation = preparations[index];
@@ -598,7 +598,7 @@ function appendRecord(records: JournalRecord[], record: JournalRecord): boolean 
 }
 
 export function deriveNextAction(
-	effects: ToolOutcomeEffects[]
+	effects: ToolExecutionEffects[]
 ): 'complete' | 'respond' | 'continue' {
 	if (effects.some((effect) => effect.requiresAgentContinuation)) return 'continue';
 	if (effects.some((effect) => effect.responseObligations.length > 0)) return 'respond';
@@ -642,7 +642,10 @@ function canonicalText(parts: CanonicalResponsePart[]): string {
 	return text;
 }
 
-function recoveryEffects(begin: ProcessingBeginResult, turnId: string): ToolOutcomeEffects | null {
+function recoveryEffects(
+	begin: ProcessingBeginResult,
+	turnId: string
+): ToolExecutionEffects | null {
 	if (begin.status !== 'resumed') return null;
 	const obligations: ResponseObligation[] = [];
 	let recovered = false;

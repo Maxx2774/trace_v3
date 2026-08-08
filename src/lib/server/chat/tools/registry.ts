@@ -5,8 +5,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type OpenAI from 'openai';
 import type { BaseIssue, BaseSchema } from 'valibot';
 import { safeParse } from 'valibot';
-import { foodLogRecordTool } from './food-log';
-import { foodLogResolveRegistrationTool } from './food-log-confirmation';
+import { foodLogRecordTool } from './food-log-record';
+import { foodLogResolveRegistrationTool } from './food-log-resolve-registration';
 
 export type ToolExecutionPolicy = {
 	effect: 'read' | 'write';
@@ -47,15 +47,15 @@ export type InteractionDiscardAcknowledgementV1 = {
 export type ResponseObligation =
 	MealDuplicateConfirmationObligationV1 | InteractionDiscardAcknowledgementV1;
 
-export type ToolOutcomeEffects = {
+export type ToolExecutionEffects = {
 	requiresAgentContinuation: boolean;
 	canonicalParts: CanonicalResponsePart[];
 	responseObligations: ResponseObligation[];
 };
 
-export type CanonicalToolResult = {
+export type ToolExecutionResult = {
 	output: Record<string, unknown>;
-	effects: ToolOutcomeEffects;
+	effects: ToolExecutionEffects;
 };
 
 export type RegisteredTool = {
@@ -63,11 +63,14 @@ export type RegisteredTool = {
 	definition: OpenAI.Responses.NamespaceTool.Function;
 	schema: BaseSchema<unknown, unknown, BaseIssue<unknown>>;
 	policy: ToolExecutionPolicy;
-	execute: (context: ToolExecutionContext, args: never) => Promise<CanonicalToolResult>;
+	execute: (context: ToolExecutionContext, args: never) => Promise<ToolExecutionResult>;
 };
 
-const tools = [foodLogRecordTool, foodLogResolveRegistrationTool] satisfies RegisteredTool[];
-const registry = new Map(tools.map((tool) => [tool.key, tool]));
+const registeredTools = [
+	foodLogRecordTool,
+	foodLogResolveRegistrationTool
+] satisfies RegisteredTool[];
+const toolByKey = new Map(registeredTools.map((tool) => [tool.key, tool]));
 
 export type ToolCatalog = {
 	namespaces: OpenAI.Responses.NamespaceTool[];
@@ -77,10 +80,10 @@ export type ToolCatalog = {
 };
 
 export function createToolCatalog(input: { hasPendingMealInteraction: boolean }): ToolCatalog {
-	const available = tools.filter(
+	const availableTools = registeredTools.filter(
 		(tool) => tool.key !== 'food_log.resolve_registration' || input.hasPendingMealInteraction
 	);
-	const direct = available.filter((tool) => tool.key === 'food_log.resolve_registration');
+	const directTools = availableTools.filter((tool) => tool.key === 'food_log.resolve_registration');
 	return {
 		namespaces: [
 			{
@@ -88,19 +91,19 @@ export function createToolCatalog(input: { hasPendingMealInteraction: boolean })
 				name: 'food_log',
 				description:
 					'Registrera mat eller dryck och hantera verifierade väntande måltidsbeslut. Varje rapport om faktisk konsumtion måste gå genom record, även om den ser ut som en dubblett i samtalshistoriken. Endast confirmation_required från verktyget får utlösa en duplicatfråga; dra aldrig den slutsatsen själv.',
-				tools: available
-					.filter((tool) => !direct.includes(tool))
+				tools: availableTools
+					.filter((tool) => !directTools.includes(tool))
 					.filter((tool) => tool.key.startsWith('food_log.'))
 					.map((tool) => tool.definition)
 			}
 		],
-		directTools: direct.map((tool) => {
+		directTools: directTools.map((tool) => {
 			const definition: OpenAI.Responses.FunctionTool = { ...tool.definition };
 			delete definition.defer_loading;
 			return definition;
 		}),
-		directToolKeyByName: new Map(direct.map((tool) => [tool.definition.name, tool.key])),
-		allowedKeys: new Set(available.map((tool) => tool.key))
+		directToolKeyByName: new Map(directTools.map((tool) => [tool.definition.name, tool.key])),
+		allowedKeys: new Set(availableTools.map((tool) => tool.key))
 	};
 }
 
@@ -126,14 +129,14 @@ export function prepareToolCall(
 	call: OpenAI.Responses.ResponseFunctionToolCall,
 	operationIndex: number,
 	catalog: Pick<ToolCatalog, 'allowedKeys' | 'directToolKeyByName'> = {
-		allowedKeys: new Set(registry.keys()),
+		allowedKeys: new Set(toolByKey.keys()),
 		directToolKeyByName: new Map()
 	}
 ): ToolCallPreparation {
 	const key = call.namespace
 		? `${call.namespace}.${call.name}`
 		: (catalog.directToolKeyByName.get(call.name) ?? `.${call.name}`);
-	const tool = registry.get(key);
+	const tool = toolByKey.get(key);
 	if (!tool || !catalog.allowedKeys.has(key)) {
 		return {
 			ok: false,
@@ -144,14 +147,14 @@ export function prepareToolCall(
 		};
 	}
 
-	let candidate: unknown;
+	let candidateArguments: unknown;
 	try {
-		candidate = JSON.parse(call.arguments);
+		candidateArguments = JSON.parse(call.arguments);
 	} catch {
 		return invalidArguments(call.call_id, key);
 	}
 
-	const parsed = safeParse(tool.schema, candidate);
+	const parsed = safeParse(tool.schema, candidateArguments);
 	if (!parsed.success) return invalidArguments(call.call_id, key);
 
 	return {

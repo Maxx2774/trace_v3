@@ -28,7 +28,7 @@ export const foodLogResolveRegistrationSchema = v.pipe(
 	)
 );
 
-const definition = {
+const foodLogResolveRegistrationDefinition = {
 	type: 'function',
 	name: 'resolve_registration',
 	description:
@@ -60,7 +60,7 @@ const definition = {
 
 export const foodLogResolveRegistrationTool = {
 	key: 'food_log.resolve_registration',
-	definition,
+	definition: foodLogResolveRegistrationDefinition,
 	schema: foodLogResolveRegistrationSchema,
 	policy: { effect: 'write', parallelSafe: false },
 	async execute(context, args) {

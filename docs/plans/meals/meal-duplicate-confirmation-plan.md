@@ -396,7 +396,7 @@ Ett domäntool returnerar fortfarande sitt strikta domänresultat. Direkt efter 
 mappar dess serveradapter resultatet till ett litet domänoberoende effektkontrakt:
 
 ```ts
-type ToolOutcomeEffects = {
+type ToolExecutionEffects = {
 	requiresAgentContinuation: boolean;
 	canonicalParts: CanonicalResponsePart[];
 	responseObligations: ResponseObligation[];
@@ -424,7 +424,7 @@ härleder orchestratorn åtgärden utan domänspecialfall:
 ```ts
 type NextTurnAction = 'complete' | 'respond' | 'continue';
 
-function deriveNextAction(effects: ToolOutcomeEffects[]): NextTurnAction {
+function deriveNextAction(effects: ToolExecutionEffects[]): NextTurnAction {
 	if (effects.some((effect) => effect.requiresAgentContinuation)) return 'continue';
 	if (effects.some((effect) => effect.responseObligations.length > 0)) return 'respond';
 	return 'complete';
@@ -731,13 +731,13 @@ sparade assistantmeddelandet utan ett nytt LLM-anrop.
   bekräftelsesammanfattningar; ingen andra TypeScript-implementation av SQL-matchningen.
 - `src/lib/server/meals/meals.ts`: typade wrappers för prepare/resolve och serververifierad
   mapping.
-- `src/lib/server/chat/tools/food-log.ts`: befintligt record-tool och dess schema.
-- `src/lib/server/chat/tools/food-log-confirmation.ts`: det separata resolve-toolet så att
+- `src/lib/server/chat/tools/food-log-record.ts`: befintligt record-tool och dess schema.
+- `src/lib/server/chat/tools/food-log-resolve-registration.ts`: det separata resolve-toolet så att
   record-filen inte växer med ett andra beteende.
 - `src/lib/server/chat/history.ts`: laddning, budgetering och symboliska bindings för
   pending-bekräftelser.
 - `src/lib/server/chat/tools/registry.ts`: det lilla generiska
-  `ToolOutcomeEffects`-kontraktet och domäntoolens explicita mapping till det.
+  `ToolExecutionEffects`-kontraktet och domäntoolens explicita mapping till det.
 - `src/lib/server/chat/orchestrator.ts`: samla ordnade effekter, bära ouppfyllda
   svarsplikter och härleda `complete | respond | continue` utan måltidsspecifika
   textheuristiker.

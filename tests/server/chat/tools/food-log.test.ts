@@ -1,8 +1,8 @@
-import { foodLogRecordSchema, foodLogRecordTool } from '$lib/server/chat/tools/food-log';
+import { foodLogRecordSchema, foodLogRecordTool } from '$lib/server/chat/tools/food-log-record';
 import {
 	foodLogResolveRegistrationSchema,
 	foodLogResolveRegistrationTool
-} from '$lib/server/chat/tools/food-log-confirmation';
+} from '$lib/server/chat/tools/food-log-resolve-registration';
 import { createToolCatalog } from '$lib/server/chat/tools/registry';
 import { safeParse } from 'valibot';
 import { describe, expect, it, vi } from 'vitest';
