@@ -55,7 +55,7 @@ begin
 		120
 	);
 	v_conversation_id := (v_result #>> '{conversation,id}')::uuid;
-	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
 
 	v_result := public.create_meal_from_chat(
 		v_user_id,
@@ -148,7 +148,7 @@ begin
 		120
 	);
 	v_other_conversation_id := (v_result #>> '{conversation,id}')::uuid;
-	v_other_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_other_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
 	v_result := public.create_meal_from_chat(
 		v_other_user_id,
 		v_other_turn_id,
@@ -393,6 +393,15 @@ begin
 		'public.create_meal_from_chat(uuid,uuid,timestamptz,integer,text,text,timestamptz,date,text,text,jsonb)',
 		'execute'
 	), 'authenticated must not execute meal creation';
+	assert (
+		select proargnames = array[
+			'p_user_id', 'p_source_turn_id', 'p_turn_lease_expires_at',
+			'p_tool_call_index', 'p_meal_type', 'p_occurred_precision', 'p_occurred_at',
+			'p_occurred_on', 'p_timezone', 'p_time_period', 'p_items'
+		]
+		from pg_catalog.pg_proc
+		where oid = 'public.create_meal_from_chat(uuid,uuid,timestamptz,integer,text,text,timestamptz,date,text,text,jsonb)'::regprocedure
+	), 'meal creation RPC parameter names must match the server contract';
 	assert not has_function_privilege(
 		'authenticated',
 		'public.update_meal(uuid,uuid,integer,uuid,text,text,timestamptz,date,text,text,jsonb)',
@@ -452,6 +461,7 @@ declare
 	v_turn_c uuid := gen_random_uuid();
 	v_turn_d uuid := gen_random_uuid();
 	v_turn_e uuid := gen_random_uuid();
+	v_turn_f uuid := gen_random_uuid();
 	v_other_turn uuid := gen_random_uuid();
 	v_conversation_id uuid;
 	v_other_conversation_id uuid;
@@ -493,7 +503,7 @@ begin
 		v_user_id, null, v_turn_a, 'Jag åt havregröt i lördags', 120
 	);
 	v_conversation_id := (v_result #>> '{conversation,id}')::uuid;
-	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
 	v_result := public.create_meal_from_chat(
 		v_user_id,
 		v_turn_a,
@@ -513,7 +523,7 @@ begin
 	v_result := public.begin_chat_turn(
 		v_user_id, v_conversation_id, v_turn_b, 'Jag åt havregröt i lördags', 120
 	);
-	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
 	v_result := public.create_meal_from_chat(
 		v_user_id,
 		v_turn_b,
@@ -557,7 +567,7 @@ begin
 	v_result := public.begin_chat_turn(
 		v_user_id, v_conversation_id, v_turn_b, 'Jag åt havregröt i lördags', 120
 	);
-	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
 	assert (
 		select status = 'prepared' and prompt_message_id is null
 		from public.pending_interactions where id = v_interaction_id
@@ -574,7 +584,7 @@ begin
 	), 'assistant commit must activate the interaction atomically';
 
 	v_result := public.begin_chat_turn(v_user_id, v_conversation_id, v_turn_c, 'Ja', 120);
-	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
 	v_result := public.resolve_meal_duplicate_interaction(
 		v_user_id, v_turn_c, v_lease, 0, v_interaction_id, 'register', null
 	);
@@ -591,7 +601,7 @@ begin
 	v_result := public.begin_chat_turn(
 		v_user_id, v_conversation_id, v_turn_d, 'Jag åt havregröt i lördags igen', 120
 	);
-	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
 	v_result := public.create_meal_from_chat(
 		v_user_id,
 		v_turn_d,
@@ -613,7 +623,7 @@ begin
 	);
 
 	v_result := public.begin_chat_turn(v_user_id, v_conversation_id, v_turn_e, 'Nej', 120);
-	v_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
 	v_result := public.resolve_meal_duplicate_interaction(
 		v_user_id,
 		v_turn_e,
@@ -629,10 +639,23 @@ begin
 	perform public.complete_chat_turn(v_user_id, v_turn_e, v_lease, 'Okej.');
 
 	v_result := public.begin_chat_turn(
+		v_user_id, v_conversation_id, v_turn_f, 'Hur ser resten av dagen ut?', 120
+	);
+	assert v_result ->> 'status' = 'created',
+		'an unrelated message after decline must start normally';
+	v_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
+	perform public.complete_chat_turn(v_user_id, v_turn_f, v_lease, 'Det ser lugnt ut.');
+	assert (
+		select status = 'completed'
+		from public.turns
+		where id = v_turn_f and user_id = v_user_id
+	), 'an unrelated message after decline must complete normally';
+
+	v_result := public.begin_chat_turn(
 		v_other_user_id, null, v_other_turn, 'Försök lösa någon annans måltid', 120
 	);
 	v_other_conversation_id := (v_result #>> '{conversation,id}')::uuid;
-	v_other_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_other_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
 	v_result := public.resolve_meal_duplicate_interaction(
 		v_other_user_id,
 		v_other_turn,
@@ -653,6 +676,21 @@ begin
 		'public.resolve_meal_duplicate_interaction(uuid,uuid,timestamptz,integer,uuid,text,text)',
 		'execute'
 	), 'authenticated must not execute interaction resolution';
+	assert (
+		select proargnames = array[
+			'p_user_id', 'p_resolution_turn_id', 'p_turn_lease_expires_at',
+			'p_tool_call_index', 'p_interaction_id', 'p_decision', 'p_reason'
+		]
+		from pg_catalog.pg_proc
+		where oid = 'public.resolve_meal_duplicate_interaction(uuid,uuid,timestamptz,integer,uuid,text,text)'::regprocedure
+	), 'interaction resolution RPC parameter names must match the server contract';
+	assert (
+		select pg_get_constraintdef(oid) like '%corrected_input%'
+			and pg_get_constraintdef(oid) not like '%corrected_proposal%'
+		from pg_catalog.pg_constraint
+		where conrelid = 'public.pending_interactions'::regclass
+			and conname = 'pending_interactions_lifecycle_check'
+	), 'interaction lifecycle reasons must use the canonical corrected_input name';
 	assert exists (
 		select 1 from pg_indexes
 		where schemaname = 'public'

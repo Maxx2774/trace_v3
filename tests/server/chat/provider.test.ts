@@ -19,7 +19,7 @@ describe('runModelStep', () => {
 				{ type: 'response.output_text.delta', delta: 'Hej!' },
 				{ type: 'response.completed', response }
 			]) as never,
-			{ toolCatalog: createToolCatalog({ hasPendingMealInteraction: false }) }
+			{ toolCatalog: createToolCatalog({ hasPendingInteraction: false }) }
 		);
 
 		expect(step.mode).toBe('text');
@@ -51,7 +51,7 @@ describe('runModelStep', () => {
 				{ type: 'response.output_item.added', item: { type: 'tool_search_call' } },
 				{ type: 'response.completed', response: { output } }
 			]) as never,
-			{ toolCatalog: createToolCatalog({ hasPendingMealInteraction: false }) }
+			{ toolCatalog: createToolCatalog({ hasPendingInteraction: false }) }
 		);
 
 		expect(step.mode).toBe('tool');
@@ -63,7 +63,7 @@ describe('runModelStep', () => {
 		const onDelta = vi.fn();
 		const raw = JSON.stringify({
 			text: 'Vill du registrera ytterligare en gröt?',
-			fulfilledObligationRefs: ['response_1']
+			fulfilledRequirementRefs: ['response_1']
 		});
 		const step = await runModelStep(
 			[{ role: 'user', content: 'Jag åt gröt' }],
@@ -81,14 +81,14 @@ describe('runModelStep', () => {
 				}
 			]) as never,
 			{
-				toolCatalog: createToolCatalog({ hasPendingMealInteraction: false }),
-				obligationRefs: ['response_1']
+				toolCatalog: createToolCatalog({ hasPendingInteraction: false }),
+				requirementRefs: ['response_1']
 			}
 		);
 
 		expect(onDelta).not.toHaveBeenCalled();
 		expect(step.text).toBe('Vill du registrera ytterligare en gröt?');
-		expect(step.fulfilledObligationRefs).toEqual(['response_1']);
+		expect(step.fulfilledRequirementRefs).toEqual(['response_1']);
 	});
 
 	it('rejects message-first output that later switches to a tool', async () => {
@@ -103,7 +103,7 @@ describe('runModelStep', () => {
 					{ type: 'response.output_text.delta', delta: 'Tillfälligt' },
 					{ type: 'response.output_item.added', item: { type: 'function_call' } }
 				]) as never,
-				{ toolCatalog: createToolCatalog({ hasPendingMealInteraction: false }) }
+				{ toolCatalog: createToolCatalog({ hasPendingInteraction: false }) }
 			)
 		).rejects.toMatchObject({ code: 'protocol_error' } satisfies Partial<ProviderStepError>);
 	});

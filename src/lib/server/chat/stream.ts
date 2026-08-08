@@ -16,7 +16,7 @@ export function createChatResponseStream(
 		beginPromise: Promise<BeginChatTurnResult>;
 		modelInput: OpenAI.Responses.ResponseInput;
 		toolCatalog: ToolCatalog;
-		interactionBindings: PendingInteractionBinding[];
+		pendingInteractionBindings: PendingInteractionBinding[];
 		userId: string;
 		turnId: string;
 		timezone: string;
@@ -60,7 +60,7 @@ export function createChatResponseStream(
 					timezone: input.timezone,
 					modelInput: input.modelInput,
 					toolCatalog: input.toolCatalog,
-					interactionBindings: input.interactionBindings,
+					pendingInteractionBindings: input.pendingInteractionBindings,
 					userMessage: input.userMessage,
 					beginPromise: input.beginPromise,
 					signal: controller.signal,

@@ -71,7 +71,7 @@ const interactionSchema = v.strictObject({
 	resolutionTurnId: v.nullable(v.string()),
 	resolutionOperationId: v.nullable(v.string()),
 	resolutionReason: v.nullable(
-		v.picklist(['user_confirmed', 'user_declined', 'conversation_moved_on', 'corrected_proposal'])
+		v.picklist(['user_confirmed', 'user_declined', 'conversation_moved_on', 'corrected_input'])
 	),
 	payload: v.strictObject({
 		proposedMeal: mealSummarySchema,
@@ -115,7 +115,7 @@ const INTERACTION_SELECTION =
 	'id,kind,status,schema_version,policy_version,proposal_turn_id,proposal_operation_id,proposal_input_hash,resolution_turn_id,resolution_operation_id,resolution_reason,payload,created_at,activated_at,resolved_at';
 
 export type PendingInteractionBinding = {
-	handle: string;
+	interactionRef: string;
 	kind: 'meal_duplicate';
 	interactionId: string;
 };
@@ -166,7 +166,10 @@ export async function listTurnMealDuplicateInteractions(
 	];
 	const unique = new Map(rows.map((row) => [row.id, row]));
 	return [...unique.values()]
-		.sort((left, right) => operationIndex(left, turnId) - operationIndex(right, turnId))
+		.sort(
+			(left, right) =>
+				toolCallIndexFromOperationId(left, turnId) - toolCallIndexFromOperationId(right, turnId)
+		)
 		.map(mapInteractionRow);
 }
 
@@ -199,7 +202,7 @@ function mapInteractionRow(row: InteractionRow): MealDuplicateInteractionV1 {
 	});
 }
 
-function operationIndex(row: InteractionRow, turnId: string): number {
+function toolCallIndexFromOperationId(row: InteractionRow, turnId: string): number {
 	const operationId =
 		row.resolution_turn_id === turnId ? row.resolution_operation_id : row.proposal_operation_id;
 	const value = Number(operationId?.split(':').at(-1));

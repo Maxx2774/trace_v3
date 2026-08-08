@@ -97,8 +97,8 @@ describe('chat meal outcomes', () => {
 		const request = {
 			userId: '10000000-0000-4000-8000-000000000000',
 			turnId: '20000000-0000-4000-8000-000000000000',
-			leaseExpiresAt: '2026-08-07T10:02:00.000Z',
-			operationIndex: 0,
+			turnLeaseExpiresAt: '2026-08-07T10:02:00.000Z',
+			toolCallIndex: 0,
 			meal: {
 				mealType: meal.mealType,
 				items: meal.items.map((item) => ({
@@ -121,26 +121,40 @@ describe('chat meal outcomes', () => {
 			status: 'confirmation_required',
 			replayed: true
 		});
+		expect(rpc).toHaveBeenNthCalledWith(
+			1,
+			'create_meal_from_chat',
+			expect.objectContaining({
+				p_turn_lease_expires_at: request.turnLeaseExpiresAt,
+				p_tool_call_index: request.toolCallIndex
+			})
+		);
 	});
 
 	it('maps a registered interaction resolution to its canonical meal', async () => {
 		const meal = mealFixture();
-		const client = {
-			rpc: vi.fn(async () => ({
-				data: { status: 'registered', meal, replayed: false },
-				error: null
-			}))
-		} as unknown as SupabaseClient;
+		const rpc = vi.fn(async () => ({
+			data: { status: 'registered', meal, replayed: false },
+			error: null
+		}));
+		const client = { rpc } as unknown as SupabaseClient;
 		await expect(
 			resolveMealDuplicateInteraction(client, {
 				userId: 'user',
 				turnId: 'turn',
-				leaseExpiresAt: 'lease',
-				operationIndex: 0,
+				turnLeaseExpiresAt: 'lease',
+				toolCallIndex: 0,
 				interactionId: 'interaction',
 				decision: 'register'
 			})
 		).resolves.toEqual({ status: 'registered', meal, replayed: false });
+		expect(rpc).toHaveBeenCalledWith(
+			'resolve_meal_duplicate_interaction',
+			expect.objectContaining({
+				p_turn_lease_expires_at: 'lease',
+				p_tool_call_index: 0
+			})
+		);
 	});
 });
 

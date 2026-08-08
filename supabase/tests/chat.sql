@@ -44,7 +44,7 @@ begin
 	v_result := public.begin_chat_turn(v_user_id, null, v_turn_id, 'Hej Trace', 120);
 	assert v_result ->> 'status' = 'created', 'begin must create a new turn';
 	v_conversation_id := (v_result #>> '{conversation,id}')::uuid;
-	v_first_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_first_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
 	assert (select count(*) from public.turns where id = v_turn_id) = 1,
 		'begin must create exactly one lifecycle row';
 	assert (select count(*) from public.messages where turn_id = v_turn_id and role = 'user') = 1,
@@ -59,7 +59,7 @@ begin
 
 	v_result := public.begin_chat_turn(v_user_id, v_conversation_id, v_turn_id, 'Hej Trace', 120);
 	assert v_result ->> 'status' = 'resumed', 'an expired lease must be reclaimable';
-	v_second_lease := (v_result ->> 'leaseExpiresAt')::timestamptz;
+	v_second_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
 	assert v_second_lease > v_first_lease, 'reclaim must issue a new fencing value';
 
 	begin
@@ -170,6 +170,28 @@ begin
 		'public.begin_chat_turn(uuid,uuid,uuid,text,integer)',
 		'execute'
 	), 'authenticated must not execute lifecycle RPCs';
+	assert (
+		select proargnames = array[
+			'p_user_id', 'p_conversation_id', 'p_turn_id', 'p_content',
+			'p_lease_duration_seconds'
+		]
+		from pg_catalog.pg_proc
+		where oid = 'public.begin_chat_turn(uuid,uuid,uuid,text,integer)'::regprocedure
+	), 'begin RPC parameter names must match the server contract';
+	assert (
+		select proargnames = array[
+			'p_user_id', 'p_turn_id', 'p_turn_lease_expires_at', 'p_content'
+		]
+		from pg_catalog.pg_proc
+		where oid = 'public.complete_chat_turn(uuid,uuid,timestamptz,text)'::regprocedure
+	), 'complete RPC parameter names must match the server contract';
+	assert (
+		select proargnames = array[
+			'p_user_id', 'p_turn_id', 'p_turn_lease_expires_at', 'p_retryable'
+		]
+		from pg_catalog.pg_proc
+		where oid = 'public.fail_chat_turn(uuid,uuid,timestamptz,boolean)'::regprocedure
+	), 'failure RPC parameter names must match the server contract';
 	assert has_function_privilege(
 		'service_role',
 		'public.complete_chat_turn(uuid,uuid,timestamptz,text)',

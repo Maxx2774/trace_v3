@@ -67,7 +67,7 @@ export type ResolveMealDuplicateResult =
 	| { status: 'registered'; meal: Meal; replayed: boolean }
 	| {
 			status: 'discarded';
-			reason: 'user_declined' | 'conversation_moved_on' | 'corrected_proposal';
+			reason: 'user_declined' | 'conversation_moved_on' | 'corrected_input';
 			replayed: boolean;
 	  }
 	| { status: 'already_resolved'; decision: 'register' | 'discard' }
@@ -85,8 +85,8 @@ export async function createMealFromChat(
 	input: {
 		userId: string;
 		turnId: string;
-		leaseExpiresAt: string;
-		operationIndex: number;
+		turnLeaseExpiresAt: string;
+		toolCallIndex: number;
 		meal: RecordMealInput;
 	}
 ): Promise<PrepareMealRegistrationResult> {
@@ -94,8 +94,8 @@ export async function createMealFromChat(
 	const { data, error } = await client.rpc('create_meal_from_chat', {
 		p_user_id: input.userId,
 		p_source_turn_id: input.turnId,
-		p_lease_expires_at: input.leaseExpiresAt,
-		p_operation_index: input.operationIndex,
+		p_turn_lease_expires_at: input.turnLeaseExpiresAt,
+		p_tool_call_index: input.toolCallIndex,
 		p_meal_type: input.meal.mealType,
 		...occurrence,
 		p_items: input.meal.items
@@ -125,18 +125,18 @@ export async function resolveMealDuplicateInteraction(
 	input: {
 		userId: string;
 		turnId: string;
-		leaseExpiresAt: string;
-		operationIndex: number;
+		turnLeaseExpiresAt: string;
+		toolCallIndex: number;
 		interactionId: string;
 		decision: 'register' | 'discard';
-		reason?: 'user_declined' | 'conversation_moved_on' | 'corrected_proposal';
+		reason?: 'user_declined' | 'conversation_moved_on' | 'corrected_input';
 	}
 ): Promise<ResolveMealDuplicateResult> {
 	const { data, error } = await client.rpc('resolve_meal_duplicate_interaction', {
 		p_user_id: input.userId,
 		p_resolution_turn_id: input.turnId,
-		p_lease_expires_at: input.leaseExpiresAt,
-		p_operation_index: input.operationIndex,
+		p_turn_lease_expires_at: input.turnLeaseExpiresAt,
+		p_tool_call_index: input.toolCallIndex,
 		p_interaction_id: input.interactionId,
 		p_decision: input.decision,
 		p_reason: input.reason ?? null
@@ -155,7 +155,7 @@ export async function resolveMealDuplicateInteraction(
 		result.status === 'discarded' &&
 		(result.reason === 'user_declined' ||
 			result.reason === 'conversation_moved_on' ||
-			result.reason === 'corrected_proposal')
+			result.reason === 'corrected_input')
 	) {
 		return { status: 'discarded', reason: result.reason, replayed: result.replayed === true };
 	}

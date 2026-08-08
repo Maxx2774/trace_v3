@@ -2,13 +2,13 @@ import type OpenAI from 'openai';
 
 export type FinalizerOutput = {
 	text: string;
-	fulfilledObligationRefs: string[];
+	fulfilledRequirementRefs: string[];
 };
 
 export class FinalizerContractError extends Error {}
 
 export function createFinalizerTextConfig(
-	obligationRefs: string[]
+	requirementRefs: string[]
 ): OpenAI.Responses.ResponseTextConfig {
 	return {
 		verbosity: 'low',
@@ -17,18 +17,18 @@ export function createFinalizerTextConfig(
 			name: 'trace_final_response',
 			strict: true,
 			description:
-				'Ett naturligt svar och de servergivna svarsplikter som texten uttryckligen uppfyller.',
+				'Ett naturligt svar och de servergivna svarskraven som texten uttryckligen uppfyller.',
 			schema: {
 				type: 'object',
 				additionalProperties: false,
 				properties: {
 					text: { type: 'string', minLength: 1 },
-					fulfilledObligationRefs: {
+					fulfilledRequirementRefs: {
 						type: 'array',
-						items: { type: 'string', enum: obligationRefs }
+						items: { type: 'string', enum: requirementRefs }
 					}
 				},
-				required: ['text', 'fulfilledObligationRefs']
+				required: ['text', 'fulfilledRequirementRefs']
 			}
 		}
 	};
@@ -36,7 +36,7 @@ export function createFinalizerTextConfig(
 
 export function parseFinalizerOutput(
 	raw: string,
-	expectedObligationRefs: string[]
+	expectedRequirementRefs: string[]
 ): FinalizerOutput {
 	let value: unknown;
 	try {
@@ -51,20 +51,20 @@ export function parseFinalizerOutput(
 	if (
 		typeof candidate.text !== 'string' ||
 		!candidate.text.trim() ||
-		!Array.isArray(candidate.fulfilledObligationRefs) ||
-		candidate.fulfilledObligationRefs.some((ref) => typeof ref !== 'string')
+		!Array.isArray(candidate.fulfilledRequirementRefs) ||
+		candidate.fulfilledRequirementRefs.some((ref) => typeof ref !== 'string')
 	) {
 		throw new FinalizerContractError('Finalizern returnerade ett ogiltigt kontrakt.');
 	}
-	const actual = candidate.fulfilledObligationRefs as string[];
-	const expected = new Set(expectedObligationRefs);
+	const actual = candidate.fulfilledRequirementRefs as string[];
+	const expected = new Set(expectedRequirementRefs);
 	if (
 		actual.length !== expected.size ||
 		new Set(actual).size !== actual.length ||
 		actual.some((ref) => !expected.has(ref)) ||
-		expectedObligationRefs.some((ref) => !actual.includes(ref))
+		expectedRequirementRefs.some((ref) => !actual.includes(ref))
 	) {
-		throw new FinalizerContractError('Finalizern uppfyllde inte exakt alla svarsplikter.');
+		throw new FinalizerContractError('Finalizern uppfyllde inte exakt alla svarskrav.');
 	}
-	return { text: candidate.text.trim(), fulfilledObligationRefs: actual };
+	return { text: candidate.text.trim(), fulfilledRequirementRefs: actual };
 }

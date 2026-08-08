@@ -47,7 +47,7 @@ skapas en separat måltid; vid avböjande skapas ingen måltid.
 - Bekräftelse skapar alltid måltiden från den serverlagrade, validerade proposal-payloaden.
   Modellen får inte återskapa eller förändra payloaden när användaren svarar ja.
 - Servern avgör deterministiskt när `confirmation_required` gäller och returnerar ett
-  strikt, typat resultat med `mealCreated: false` och en strukturerad svarsplikt. En
+  strikt, typat resultat med `mealCreated: false` och ett strukturerat svarskrav. En
   separat liten LLM-finalizer utan tools formulerar den naturliga frågan; ingen serverägd
   språk-, mall- eller pluraliseringslogik införs. Finalizern körs högst en gång efter en
   avslutad batch av tool-resultat.
@@ -98,29 +98,29 @@ skapas en separat måltid; vid avböjande skapas ingen måltid.
   kanonisk domändata; automatisk redigering byggs inte nu.
 - Lifecycle-reglerna låses med SQL `CHECK`-constraints, inte enbart TypeScript. V1 har
   endast `prepared`, `pending`, `confirmed` och `discarded`; korrigering uttrycks genom
-  `discarded + corrected_proposal`, inte en separat `superseded`-status.
+  `discarded + corrected_input`, inte en separat `superseded`-status.
 - Om nästa användarmeddelande tydligt byter till ett orelaterat ämne ska LLM:en i samma
   modellturn explicit discard:a den gamla interactionen med reason
   `conversation_moved_on`. Servern använder ingen relevansheuristik. En följdfråga om
   den väntande registreringen lämnar den däremot `pending`.
 - Varje tool-resultat producerar generiska, verifierade effekter: om agenten måste
-  fortsätta arbeta, vilka kanoniska svarsdelar som finns och vilka naturliga
-  svarsplikter som återstår. Orchestratorn samlar hela batchen i stabil
-  `operationIndex`-ordning och härleder därefter exakt en åtgärd: `complete`, `respond`
+  fortsätta arbeta, vilka verifierade svarsdelar som finns och vilka naturliga
+  svarskrav som återstår. Orchestratorn samlar hela batchen i stabil
+  `toolCallIndex`-ordning och härleder därefter exakt en åtgärd: `complete`, `respond`
   eller `continue`, med prioriteten `continue > respond > complete`.
 - `respond` använder en liten fryst `ResponseFinalizerContext` och samma typade
   slutkontrakt oavsett domän. Den har inga tools, får inte hitta på nya fakta och måste
-  returnera både naturlig text och referenser till samtliga svarsplikter den uppfyllt.
+  returnera både naturlig text och referenser till samtliga svarskrav den uppfyllt.
   Detta är den långsiktiga språkytan för framtida domäner, inte måltidsspecifik logik.
 - `continue` används endast när fler agentbeslut eller tool-anrop faktiskt kan behövas.
-  Ouppfyllda svarsplikter följer då med. När agenten når ett terminalt textsvar ska samma
+  Ouppfyllda svarskrav följer då med. När agenten når ett terminalt textsvar ska samma
   strukturerade slutkontrakt användas; en extra finalizer körs bara om ett giltigt svar
   inte redan producerats.
 - En modellturn får innehålla både skapade records och interactions som kräver
   bekräftelse. Oberoende tool calls får köras parallellt, men samtliga resultat bevaras
-  och sammanställs i stabil `operationIndex`-ordning. Kort/events skickas för varje
+  och sammanställs i stabil `toolCallIndex`-ordning. Kort/events skickas för varje
   skapad record. Snabbsvaret `Registrerat` används endast när samtliga effekter är
-  kompletta utan naturlig svarsplikt.
+  kompletta utan naturligt svarskrav.
 - Tool-mutationer committas före finalizer-anropet och ingen databastransaktion hålls
   öppen under ett LLM-anrop. `respond` får bara användas när dess kontext kan
   rekonstrueras från beständiga records/interactions och stabila operationsresultat;
@@ -289,7 +289,7 @@ Lås följande integritet:
   resolution-fält. Terminala rader måste ha prompt-, aktiverings- och samtliga
   resolution-fält. `confirmed` har `resolution_reason = 'user_confirmed'`.
   `discarded` kräver någon av `user_declined`, `conversation_moved_on` eller
-  `corrected_proposal`.
+  `corrected_input`.
 - Statusmängden och samtliga statusberoende null/non-null-regler ovan ska uttryckas som
   databasens `CHECK`-constraints. Servervalidering kompletterar men ersätter dem inte.
 - `commit_turn` sparar den LLM-formulerade assistantfrågan och sätter
@@ -359,14 +359,14 @@ Skapa en separat `resolve_meal_duplicate_interaction`-RPC med:
 type ResolveMealDuplicateInteractionInput = {
 	userId: string;
 	turnId: string;
-	leaseExpiresAt: string;
-	operationIndex: number;
+	turnLeaseExpiresAt: string;
+	toolCallIndex: number;
 	interactionId: string;
 } & (
 	| { decision: 'register' }
 	| {
 			decision: 'discard';
-			reason: 'user_declined' | 'conversation_moved_on' | 'corrected_proposal';
+			reason: 'user_declined' | 'conversation_moved_on' | 'corrected_input';
 	  }
 );
 ```
@@ -390,51 +390,53 @@ till `service_role`, i linje med nuvarande serverägda mutationsmodell.
 
 ## Server- och toolkontrakt
 
-### Generiska tool-effects och nästa åtgärd
+### Generisk tool-orkestrering och nästa åtgärd
 
 Ett domäntool returnerar fortfarande sitt strikta domänresultat. Direkt efter validering
-mappar dess serveradapter resultatet till ett litet domänoberoende effektkontrakt:
+mappar dess serveradapter resultatet till ett litet domänoberoende orkestreringskontrakt:
 
 ```ts
-type ToolExecutionEffects = {
-	requiresAgentContinuation: boolean;
-	canonicalParts: CanonicalResponsePart[];
-	responseObligations: ResponseObligation[];
+type ToolExecutionResult = {
+	modelOutput: Record<string, unknown>;
+	orchestration: ToolExecutionOrchestration;
 };
 
-type ResponseObligation =
-	MealDuplicateConfirmationObligationV1 | InteractionDiscardAcknowledgementV1;
+type ToolExecutionOrchestration = {
+	requiresAgentContinuation: boolean;
+	verifiedResponseParts: VerifiedResponsePart[];
+	responseRequirements: ResponseRequirement[];
+};
 ```
 
 - `requiresAgentContinuation` är `true` endast när agenten kan behöva fatta ett nytt
   beslut eller anropa fler tools, exempelvis efter ett korrigerbart fel eller när ett
   nytt användarärende återstår.
-- `canonicalParts` refererar till redan verifierade, deterministiska svarsdelar såsom
+- `verifiedResponseParts` refererar till redan verifierade, deterministiska svarsdelar såsom
   skapade `JournalRecord`-kort och **Registrerat**. V1 återanvänder befintliga records och
   events; ingen ny tabell eller beständig generell response-part-modell införs.
-- `responseObligations` beskriver naturligt språk som fortfarande måste produceras.
+- `responseRequirements` beskriver naturligt språk som fortfarande måste produceras.
   Varje unionsmedlem har en stabil symbolisk `ref`, stabil `kind`, `schemaVersion` och
   endast de verifierade fakta som krävs för att uttrycka den. Alla varianter valideras
   strikt vid runtime. Exempel i v1 är
   `ask_meal_duplicate_confirmation` och `acknowledge_interaction_discard`.
 
-Alla resultat i en exekverad batch samlas först och sorteras på `operationIndex`. Därefter
+Alla resultat i en exekverad batch samlas först och sorteras på `toolCallIndex`. Därefter
 härleder orchestratorn åtgärden utan domänspecialfall:
 
 ```ts
 type NextTurnAction = 'complete' | 'respond' | 'continue';
 
-function deriveNextAction(effects: ToolExecutionEffects[]): NextTurnAction {
-	if (effects.some((effect) => effect.requiresAgentContinuation)) return 'continue';
-	if (effects.some((effect) => effect.responseObligations.length > 0)) return 'respond';
+function deriveNextAction(orchestrations: ToolExecutionOrchestration[]): NextTurnAction {
+	if (orchestrations.some((item) => item.requiresAgentContinuation)) return 'continue';
+	if (orchestrations.some((item) => item.responseRequirements.length > 0)) return 'respond';
 	return 'complete';
 }
 ```
 
-`complete` skickar endast de kanoniska delarna och gör inget nytt LLM-anrop. `respond`
+`complete` skickar endast de verifierade delarna och gör inget nytt LLM-anrop. `respond`
 kör en separat finalizer. `continue` ger den fulla agenten tool-resultaten och alla ännu
-ouppfyllda svarsplikter så att den kan fortsätta arbeta. Nya domäner ansluter genom att
-mappa sina verifierade resultat till samma tre effektfält, inte genom att växa en global
+ouppfyllda svarskrav så att den kan fortsätta arbeta. Nya domäner ansluter genom att
+mappa sina verifierade resultat till samma tre orkestreringsfält, inte genom att växa en global
 prompt med domänregler.
 
 Turer utan tool calls påverkas inte. Ett meddelande som ”Hej” besvaras direkt av den
@@ -450,19 +452,19 @@ type ResponseFinalizerContext = {
 	referenceInstant: string;
 	timezone: string;
 	currentUserMessage: string;
-	canonicalParts: CanonicalResponsePart[];
-	responseObligations: ResponseObligation[];
+	verifiedResponseParts: VerifiedResponsePart[];
+	responseRequirements: ResponseRequirement[];
 };
 
 type FinalizerOutput = {
 	text: string;
-	fulfilledObligationRefs: string[];
+	fulfilledRequirementRefs: string[];
 };
 ```
 
 Kontexten innehåller ingen generell historik, ingen dump av dagens eller gårdagens
 måltider och inga råa interna databas-ID:n. `referenceInstant` fryses med turen så att
-ord som ”idag” och ”igår” inte ändrar betydelse vid retry. Obligationernas verifierade
+ord som ”idag” och ”igår” inte ändrar betydelse vid retry. Svarskravens verifierade
 sammanfattningar är språkunderlag; interaction-payload och domändata förblir auktoritet.
 
 Finalizern:
@@ -480,7 +482,7 @@ Profilen ska ligga centralt och kunna utvärderas utan att ändra domänkontrakt
 med `reasoning: low`; prova `none` och/eller ett lägre output-tak först efter mätning av
 latens och svarskvalitet.
 
-Om en `continue`-körning får svarsplikter använder dess terminala textsvar samma strikta
+Om en `continue`-körning får svarskrav använder dess terminala textsvar samma strikta
 `FinalizerOutput`. Ett giltigt sådant svar skickas direkt och ingen separat finalizer
 körs. Om agenten i stället gör fler tool calls samlas deras effekter in, gamla ouppfyllda
 plikter följer med och nästa åtgärd härleds på nytt efter hela batchen.
@@ -501,7 +503,7 @@ type FoodLogRecordOutput =
 	| { status: 'created'; meal: Meal }
 	| {
 			status: 'confirmation_required';
-			confirmationRef: string;
+			interactionRef: string;
 			proposedMeal: MealSummary;
 			existingMeal: MealSummary;
 			match: MealDuplicateMatchDetails;
@@ -521,64 +523,58 @@ Vid `confirmation_required`:
 - innehåller resultatet uttryckligen `mealCreated: false` och
   `requiredAction: 'ask_for_confirmation'`
 
-Vid `created` skapas en kanonisk record-del utan svarsplikt. Om alla resultat i batchen
+Vid `created` skapas en verifierad record-del utan svarskrav. Om alla resultat i batchen
 är likadana härleds `complete` och nuvarande deterministiska **Registrerat** används utan
 ytterligare LLM-anrop.
 
-### `food_log.resolve_registration`
+### `process_interaction_response`
 
-Lägg till ett separat deferred tool:
+Lägg till ett separat direct tool:
 
 ```ts
-type ResolveRegistrationInput =
-	| {
-			confirmationRef: string;
-			decision: 'register';
-			responseRequired: boolean;
-	  }
-	| {
-			confirmationRef: string;
-			decision: 'discard';
-			reason: 'user_declined' | 'conversation_moved_on' | 'corrected_proposal';
-			responseRequired: boolean;
-	  }
-	| {
-			confirmationRef: string;
-			decision: 'leave_pending';
-			reason: 'interaction_followup' | 'ambiguous_response';
-			responseRequired: true;
-	  };
+type ProcessInteractionResponseInput = {
+	interactionRef: string;
+	responseMeaning:
+		| 'confirmed'
+		| 'confirmed_with_additional_intent'
+		| 'rejected'
+		| 'rejected_with_additional_intent'
+		| 'conversation_moved_on'
+		| 'corrected_input'
+		| 'interaction_followup'
+		| 'ambiguous_response';
+};
 ```
 
-- Lägg endast verktyget i den aktuella requestens sökbara katalog när serverns frysta
+- Lägg endast verktyget direkt i den aktuella requesten när serverns frysta
   modellkontext innehåller minst en verifierad `pending` meal-confirmation. Detta är
   databasstyrd capability-exponering, inte semantisk routing eller en textheuristik.
-- `register` får endast användas efter ett uttryckligt ja till den projicerade
+- `confirmed` får endast användas efter ett uttryckligt ja till den projicerade
   bekräftelsen. Resultatet innehåller måltiden och en `JournalRecord`; en ren bekräftelse
-  ger en kanonisk record-del utan svarsplikt och använder därmed den befintliga
+  ger en verifierad record-del utan svarskrav och använder därmed den befintliga
   deterministiska texten **Registrerat**.
-- `responseRequired` sätts av LLM:en till `true` endast när samma användarmeddelande också
-  innehåller ett nytt ärende eller en fråga som behöver ett naturligt svar; ett rent ja
-  eller nej använder `false`. Det är ett explicit tool-kontrakt, inte serverheuristik.
+- Varianterna med `additional_intent` används endast när samma användarmeddelande också
+  innehåller något mer som behöver hanteras. Servern härleder agentfortsättning från
+  `responseMeaning`; modellen styr inte orkestreringen direkt.
 - När den frysta kontexten innehåller minst en verifierad pending interaction tvingar
-  requestkontraktet modellen att anropa `resolve_registration` som första protokollsteg.
-  LLM:en väljer själv semantiken: `register`, `discard` eller `leave_pending`. Detta
+  requestkontraktet modellen att anropa `process_interaction_response` som första
+  protokollsteg. LLM:en klassificerar användarens svar i exakt ett `responseMeaning`. Detta
   hindrar ett vanligt textsvar från att oavsiktligt lämna protokollstate hängande utan att
   servern klassificerar användartext.
-- `leave_pending` muterar ingenting och används endast för en faktisk följdfråga om
-  förslaget eller ett genuint otydligt svar. Resultatet kräver en fortsatt agentkörning som
-  formulerar svaret; efterföljande modellsteg i samma tur tvingas inte fatta beslutet igen.
-- `discard` innehåller ingen `JournalRecord` och skapar en
+- `interaction_followup` och `ambiguous_response` muterar ingenting och används endast för
+  en faktisk följdfråga om förslaget respektive ett genuint otydligt svar. Resultatet kräver
+  en fortsatt agentkörning; efterföljande modellsteg i samma tur tvingas inte klassificera
+  svaret igen.
+- Avvisande utfall innehåller ingen `JournalRecord` och skapar en
   `acknowledge_interaction_discard`-plikt för ett kort naturligt svar. Ett nytt ärende,
-  med eller utan fler tools, sätter `requiresAgentContinuation` via `responseRequired`
-  och plikten följer med.
+  med eller utan fler tools, härleds från `responseMeaning` och plikten följer med.
 - Otydligt svar, flera relevanta pending-förslag eller en korrigering ska inte gissas som
-  `register`. Modellen frågar kort eller använder en ny `food_log.record`-operation.
-- Ett tydligt byte till ett orelaterat ämne ska få modellen att anropa `discard` med
-  `conversation_moved_on` samtidigt som den hanterar det nya ämnet. Detta är ett
+  `confirmed`. Modellen frågar kort eller använder en ny `food_log.record`-operation.
+- Ett tydligt byte till ett orelaterat ämne klassificeras som `conversation_moved_on`
+  samtidigt som modellen hanterar det nya ämnet. Detta är ett
   LLM-tolkat protokollbeslut, inte serverägd textklassificering. En faktisk följdfråga
   om interactionen lämnar den pending.
-- Ett okänt, ännu inte levererat eller redan löst handle ger ett typat korrigerbart
+- En okänd, ännu inte levererad eller redan löst `interactionRef` ger ett typat korrigerbart
   tool-resultat, inte ett generellt serverfel.
 
 ### Symboliska referenser i modellkontexten
@@ -600,13 +596,13 @@ kontextladdning modellen redan behöver.
 
 Projicera endast:
 
-- symboliskt handle, exempelvis `pending_meal_1`
+- symbolisk `interactionRef`, exempelvis `interaction_1`
 - proposalens måltidstyp, occurrence, items och uttryckliga ingredienser
 - den befintliga kandidatens motsvarande sammanfattning
 - strukturerad matchningsorsak och relevanta skillnader
 
 Databas-ID:n skickas inte till modellen. Lägg bindingen i modellkontextens verifierade
-referenskarta och låt tool-exekveringen översätta `confirmationRef` till internt UUID,
+referenskarta och låt tool-exekveringen översätta `interactionRef` till internt UUID,
 följt av en ny serververifiering i RPC:n.
 
 Propagera referenskartan och den serververifierade konversationens ID explicit genom
@@ -614,10 +610,10 @@ route → stream → orchestrator → `ToolExecutionContext`. LLM-argumentet inn
 det symboliska handlet; UUID:t hämtas aldrig från fri modelltext.
 
 Pending-projektionen räknas in i befintlig tecken- och tokenbudget. Den fulla agentens
-generella kärnprompt får endast regler för hur svarsplikter följer med genom
+generella kärnprompt får endast regler för hur svarskrav följer med genom
 `continue`; måltidsspecifika formuleringar läggs inte där. Finalizerns separata lilla
 kärnprompt beskriver det generella `FinalizerOutput`-kontraktet. Själva semantiken och
-de verifierade fakta som ska uttryckas kommer från de versionerade obligationerna.
+de verifierade fakta som ska uttryckas kommer från de versionerade svarskraven.
 
 ## Orkestrering och användarflöde
 
@@ -643,20 +639,20 @@ food_log.record(gröt)  → confirmation_required + prepared interaction
 → banankortets event skickas
 → båda resultatens effekter samlas i stabil operationsordning
 → respond härleds en gång
-→ finalizern skriver ett gemensamt svar och uppfyller grötens svarsplikt
+→ finalizern skriver ett gemensamt svar och uppfyller grötens svarskrav
 → assistantmeddelandet committas och gröt-interactionen blir pending
 ```
 
 Oberoende tool calls får exekveras parallellt men resultatordningen bestäms alltid av
-`operationIndex`. Ingen skapad record får döljas för att en annan operation väntar på
+`toolCallIndex`. Ingen skapad record får döljas för att en annan operation väntar på
 bekräftelse, och ingen väntande proposal får beskrivas som registrerad.
 
 ### Användaren bekräftar
 
 ```text
 ”Ja”
-→ pending_meal_1 finns i verifierad modellkontext
-→ food_log.resolve_registration(register)
+→ interaction_1 finns i verifierad modellkontext
+→ process_interaction_response(confirmed)
 → meal skapas från lagrad proposal
 → journal_record_created
 → Registrerat + måltidskort
@@ -666,9 +662,9 @@ bekräftelse, och ingen väntande proposal får beskrivas som registrerad.
 
 ```text
 ”Nej”
-→ food_log.resolve_registration(discard)
+→ process_interaction_response(rejected)
 → ingen meal och inget kort
-→ acknowledge_interaction_discard-plikt
+→ acknowledge_interaction_discard-krav
 → respond-finalizern ger ett kort naturligt assistantsvar
 ```
 
@@ -676,17 +672,17 @@ bekräftelse, och ingen väntande proposal får beskrivas som registrerad.
 
 ```text
 ”Nej, jag menade idag”
-→ food_log.resolve_registration(discard) körs först
+→ process_interaction_response(corrected_input) körs först
 → food_log.record körs därefter med korrigerat datum
 → den nya operationen genomgår samma policy
-→ hela batchens kanoniska delar och svarsplikter sammanställs
+→ hela batchens verifierade delar och svarskrav sammanställs
 ```
 
 Modellen bör i samma steg avvisa den gamla pending-bekräftelsen och skicka den nya
 registreringen när båda operationerna är kända, men discard-anropet ska ligga först.
-Operationerna ska exekveras i stabil verktygsordning; resolve-toolen märks därför inte
-`parallelSafe` när den kombineras med andra måltidsmutationer. Om ett korrigerbart utfall
-ändå kräver `continue` följer kvarvarande svarsplikter med. När agenten är färdig måste
+Operationerna ska exekveras i stabil verktygsordning; resolve-toolen får därför
+`concurrency: 'serial'` när den kombineras med andra måltidsmutationer. Om ett korrigerbart utfall
+ändå kräver `continue` följer kvarvarande svarskrav med. När agenten är färdig måste
 terminalsvaret uppfylla dem via `FinalizerOutput`; då görs inget tredje modellanrop.
 
 ### Användaren byter ämne
@@ -694,17 +690,17 @@ terminalsvaret uppfylla dem via `FinalizerOutput`; då görs inget tredje modell
 ```text
 ”Jag har ont i magen idag”
 → modellen bedömer att måltidsfrågan inte besvaras
-→ food_log.resolve_registration(discard, conversation_moved_on)
+→ process_interaction_response(conversation_moved_on)
 → symptoms.record kan köras i samma modellturn
 → den gamla interactionen är inte längre pending
-→ discard-plikten och symptomutfallet sammanställs i det terminala svaret
+→ discard-kravet och symptomutfallet sammanställs i det terminala svaret
 ```
 
 Oberoende operationer i olika domäner får exekveras parallellt när respektive tool är
 markerat säkert för det. Servern gör ingen egen relevansbedömning och ett förtydligande
 om dublettfrågan ska inte discard:a interactionen. Om någon effekt kräver `continue`
 väntar orchestratorn in hela den parallella batchen och skickar sedan samtliga resultat
-och ouppfyllda obligationer i en enda fortsatt agentkörning.
+och ouppfyllda svarskrav i en enda fortsatt agentkörning.
 
 ### Fel och retry runt finalizern
 
@@ -732,20 +728,25 @@ sparade assistantmeddelandet utan ett nytt LLM-anrop.
 - `src/lib/server/meals/meals.ts`: typade wrappers för prepare/resolve och serververifierad
   mapping.
 - `src/lib/server/chat/tools/food-log-record.ts`: befintligt record-tool och dess schema.
-- `src/lib/server/chat/tools/food-log-resolve-registration.ts`: det separata resolve-toolet så att
-  record-filen inte växer med ett andra beteende.
+- `src/lib/server/chat/tools/process-interaction-response.ts`: det generiska direct-toolet som
+  processar användarens svar och dispatchar verifierad interaction-typ till domänoperationen.
 - `src/lib/server/chat/history.ts`: laddning, budgetering och symboliska bindings för
   pending-bekräftelser.
-- `src/lib/server/chat/tools/registry.ts`: det lilla generiska
-  `ToolExecutionEffects`-kontraktet och domäntoolens explicita mapping till det.
-- `src/lib/server/chat/orchestrator.ts`: samla ordnade effekter, bära ouppfyllda
-  svarsplikter och härleda `complete | respond | continue` utan måltidsspecifika
+- `src/lib/server/chat/response-requirements.ts`: versionerade svarskrav och den
+  gemensamma `ResponseRequirement`-unionen.
+- `src/lib/server/chat/tools/contracts.ts`: det lilla generiska
+  `ToolExecutionResult`- och `ToolExecutionOrchestration`-kontraktet som domäntoolen
+  mappar sitt resultat till.
+- `src/lib/server/chat/tools/registry.ts`: registrering, tillgänglighetskatalog och
+  validering av modellens tool-anrop.
+- `src/lib/server/chat/orchestrator.ts`: samla ordnad orkestrering, bära ouppfyllda
+  svarskrav och härleda `complete | respond | continue` utan måltidsspecifika
   textheuristiker.
 - `src/lib/server/chat/response-finalizer.ts`: bygg rekonstruerbar
   `ResponseFinalizerContext`, kör den verktygslösa Luna-profilen och validera
   `FinalizerOutput`.
 - `src/lib/server/chat/provider.ts`: stöd det strikta terminala output-kontraktet när en
-  agent- eller finalizer-request har svarsplikter; exponera fortfarande endast `text`
+  agent- eller finalizer-request har svarskrav; exponera fortfarande endast `text`
   utåt efter servervalidering.
 - `supabase/migrations/*`: tabell, policy-v1-helper, index och atomiska RPC:er.
 - `supabase/tests/meal_logging.sql`: auktoritativa policy-, idempotens-, auth- och
@@ -788,20 +789,20 @@ Täck minst följande:
 - record-tool mappar `created` respektive `confirmation_required` korrekt
 - ingen JournalRecord eller registreringsbekräftelse skickas före användarens ja
 - resolve register skapar record och använder befintlig deterministisk **Registrerat**
-- resolve discard skapar en svarsplikt utan record; ett rent nej kräver inte
-  agentfortsättning medan ett samtidigt nytt ärende gör det via `responseRequired`
-- verifierad pending state tvingar ett första `resolve_registration`-anrop; modellen kan
-  explicit `leave_pending` för en följdfråga utan databasmutation eller loop
+- avvisande utfall skapar ett svarskrav utan record; ett rent nej kräver inte
+  agentfortsättning medan ett samtidigt nytt ärende uttrycks direkt i `responseMeaning`
+- verifierad pending state tvingar ett första `process_interaction_response`-anrop;
+  `interaction_followup` lämnar förslaget pending utan databasmutation eller loop
 - `deriveNextAction` ger `continue` före `respond` och `respond` före `complete`
-- hela parallella tool-batchen samlas i stabil `operationIndex`-ordning före
+- hela parallella tool-batchen samlas i stabil `toolCallIndex`-ordning före
   action-derivering
 - en ren created-batch ger `complete` utan extra LLM-anrop
 - en ren confirmation-batch ger exakt ett `respond`-anrop utan tools
 - blandade created- och confirmation-resultat ger ett gemensamt finalizersvar samtidigt
-  som samtliga kanoniska record-events bevaras
-- terminalt `continue`-svar med giltiga `fulfilledObligationRefs` gör inget extra
+  som samtliga verifierade record-events bevaras
+- terminalt `continue`-svar med giltiga `fulfilledRequirementRefs` gör inget extra
   finalizer-anrop
-- finalizersvar med saknad, duplicerad eller okänd obligation-ref avvisas
+- finalizersvar med saknad, duplicerad eller okänd requirement-ref avvisas
 - finalizer-requesten innehåller varken tools, `tool_search`, konversationshistorik eller
   generell måltidsprojektion
 - finalizer-retry rekonstruerar samma frysta kontext utan att köra tool-mutationer igen
@@ -812,7 +813,7 @@ Täck minst följande:
 - interna UUID:n förekommer inte i modellmeddelanden
 - pending-projektionen respekterar kontextbudgeten
 - replay av en slutförd teknisk turn behåller nuvarande deterministiska beteende
-- flera tool-calls behåller stabil ordning och korrekt `parallelSafe`-policy
+- flera tool-calls behåller stabil ordning och korrekt `concurrency`
 
 ### End-to-end i utvecklingsmiljön
 

@@ -9,7 +9,7 @@ export type ModelStep = {
 	text: string;
 	output: OpenAI.Responses.ResponseOutputItem[];
 	functionCalls: OpenAI.Responses.ResponseFunctionToolCall[];
-	fulfilledObligationRefs: string[];
+	fulfilledRequirementRefs: string[];
 };
 
 export class ProviderStepError extends Error {
@@ -29,7 +29,7 @@ export async function runModelStep(
 	signal: AbortSignal,
 	onTextDelta: (delta: string) => void,
 	createStream: typeof createModelStream = createModelStream,
-	options?: { toolCatalog: ToolCatalog; obligationRefs?: string[]; requiredToolName?: string }
+	options?: { toolCatalog: ToolCatalog; requirementRefs?: string[]; requiredToolName?: string }
 ): Promise<ModelStep> {
 	if (!options) throw new Error('Toolkatalog saknas för modellsteget.');
 	const stream = await createStream(input, userId, signal, options);
@@ -60,7 +60,7 @@ export async function runModelStep(
 			}
 		} else if (event.type === 'response.output_text.delta') {
 			streamedText += event.delta;
-			if (mode === 'text' && !options.obligationRefs?.length) onTextDelta(event.delta);
+			if (mode === 'text' && !options.requirementRefs?.length) onTextDelta(event.delta);
 		} else if (event.type === 'response.completed') {
 			completed = event.response;
 		} else if (event.type === 'response.failed' || event.type === 'error') {
@@ -101,25 +101,25 @@ export async function runModelStep(
 	}
 
 	const finalMode = functionCalls.length > 0 || hasToolItems ? 'tool' : 'text';
-	let canonicalText = rawText;
-	let fulfilledObligationRefs: string[] = [];
-	if (finalMode === 'text' && options.obligationRefs?.length) {
-		const parsed = parseFinalizerOutput(rawText, options.obligationRefs);
-		canonicalText = parsed.text;
-		fulfilledObligationRefs = parsed.fulfilledObligationRefs;
+	let finalText = rawText;
+	let fulfilledRequirementRefs: string[] = [];
+	if (finalMode === 'text' && options.requirementRefs?.length) {
+		const parsed = parseFinalizerOutput(rawText, options.requirementRefs);
+		finalText = parsed.text;
+		fulfilledRequirementRefs = parsed.fulfilledRequirementRefs;
 	}
-	if (finalMode === 'tool' && functionCalls.length === 0 && canonicalText) {
-		onTextDelta(canonicalText);
+	if (finalMode === 'tool' && functionCalls.length === 0 && finalText) {
+		onTextDelta(finalText);
 	} else if (finalMode === 'text' && streamedText !== rawText) {
-		// The orchestrator emits a canonical replace event after the step.
+		// The orchestrator emits a verified replace event after the step.
 	}
 
 	return {
 		mode: finalMode,
-		text: canonicalText,
+		text: finalText,
 		output: completed.output,
 		functionCalls,
-		fulfilledObligationRefs
+		fulfilledRequirementRefs
 	};
 }
 

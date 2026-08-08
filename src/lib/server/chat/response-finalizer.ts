@@ -3,22 +3,23 @@ import type OpenAI from 'openai';
 import { CHAT_MODEL, createSafetyIdentifier, getOpenAIClient } from './model';
 import { ProviderStepError } from './provider';
 import { createFinalizerTextConfig, parseFinalizerOutput } from './response-contract';
-import type { CanonicalResponsePart, ResponseObligation } from './tools/registry';
+import type { ResponseRequirement } from './response-requirements';
+import type { VerifiedResponsePart } from './tools/contracts';
 
 export type ResponseFinalizerContext = {
 	referenceInstant: string;
 	timezone: string;
 	currentUserMessage: string;
-	canonicalParts: CanonicalResponsePart[];
-	responseObligations: ResponseObligation[];
+	verifiedResponseParts: VerifiedResponsePart[];
+	responseRequirements: ResponseRequirement[];
 };
 
 const FINALIZER_INSTRUCTIONS = `Du är Trace response-finalizer. Skriv ett enda kort och naturligt svar på samma språk som användarens senaste meddelande.
 
 Regler:
-- Uppfyll samtliga responseObligations tydligt i texten.
+- Uppfyll samtliga responseRequirements tydligt i texten.
 - Använd endast verifierade fakta i responseContext. Hitta inte på, ändra eller utför något.
-- canonicalParts är redan genomförda resultat; beskriv aldrig en väntande proposal som registrerad.
+- verifiedResponseParts är redan genomförda resultat; beskriv aldrig en väntande proposal som registrerad.
 - Formulera naturligt utan servermallar. Lägg inte till råd, följdfrågor eller nya ämnen som inte krävs.
 - Returnera exakt det strukturerade slutkontraktet.`;
 
@@ -28,10 +29,10 @@ export async function runResponseFinalizer(
 	signal: AbortSignal,
 	client: Pick<OpenAI, 'responses'> = getOpenAIClient(),
 	safetyIdentifier = createSafetyIdentifier(userId)
-): Promise<{ text: string; fulfilledObligationRefs: string[] }> {
-	const obligationRefs = context.responseObligations.map((obligation) => obligation.ref);
-	if (obligationRefs.length === 0) {
-		throw new Error('Finalizern kräver minst en svarsplikt.');
+): Promise<{ text: string; fulfilledRequirementRefs: string[] }> {
+	const requirementRefs = context.responseRequirements.map((requirement) => requirement.ref);
+	if (requirementRefs.length === 0) {
+		throw new Error('Finalizern kräver minst ett svarskrav.');
 	}
 
 	let response;
@@ -46,14 +47,14 @@ export async function runResponseFinalizer(
 						content: JSON.stringify({
 							referenceInstant: context.referenceInstant,
 							timezone: context.timezone,
-							canonicalParts: context.canonicalParts.map(projectCanonicalPart),
-							responseObligations: context.responseObligations
+							verifiedResponseParts: context.verifiedResponseParts.map(projectVerifiedResponsePart),
+							responseRequirements: context.responseRequirements
 						})
 					},
 					{ role: 'user', content: context.currentUserMessage }
 				],
 				reasoning: { effort: 'low', context: 'current_turn' },
-				text: createFinalizerTextConfig(obligationRefs),
+				text: createFinalizerTextConfig(requirementRefs),
 				max_output_tokens: 512,
 				truncation: 'disabled',
 				store: false,
@@ -69,13 +70,13 @@ export async function runResponseFinalizer(
 		throw new ProviderStepError('incomplete_response', 'Svaret blev inte färdigt.', true);
 	}
 	try {
-		return parseFinalizerOutput(response.output_text.trim(), obligationRefs);
+		return parseFinalizerOutput(response.output_text.trim(), requirementRefs);
 	} catch {
 		throw new ProviderStepError('protocol_error', 'Svaret följde inte slutkontraktet.', true);
 	}
 }
 
-function projectCanonicalPart(part: CanonicalResponsePart): unknown {
+function projectVerifiedResponsePart(part: VerifiedResponsePart): unknown {
 	if (part.kind === 'text') return part;
 	const meal = part.record.value;
 	const summary: MealSummary = {

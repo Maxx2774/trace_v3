@@ -9,7 +9,7 @@ export type BeginChatTurnResult =
 			status: 'created';
 			conversation: ConversationSummary;
 			message: ChatMessage;
-			leaseExpiresAt: string;
+			turnLeaseExpiresAt: string;
 			journalRecords: TurnJournalRecord[];
 			interactions: MealDuplicateInteractionV1[];
 	  }
@@ -17,7 +17,7 @@ export type BeginChatTurnResult =
 			status: 'resumed';
 			conversation: ConversationSummary;
 			message: ChatMessage;
-			leaseExpiresAt: string;
+			turnLeaseExpiresAt: string;
 			journalRecords: TurnJournalRecord[];
 			interactions: MealDuplicateInteractionV1[];
 	  }
@@ -72,12 +72,12 @@ export async function beginChatTurn(
 
 export async function completeChatTurn(
 	client: SupabaseClient,
-	input: { userId: string; turnId: string; leaseExpiresAt: string; content: string }
+	input: { userId: string; turnId: string; turnLeaseExpiresAt: string; content: string }
 ): Promise<CommitChatTurnResult> {
 	const { data, error } = await client.rpc('complete_chat_turn', {
 		p_user_id: input.userId,
 		p_turn_id: input.turnId,
-		p_lease_expires_at: input.leaseExpiresAt,
+		p_turn_lease_expires_at: input.turnLeaseExpiresAt,
 		p_content: input.content
 	});
 
@@ -87,12 +87,12 @@ export async function completeChatTurn(
 
 export async function failChatTurn(
 	client: SupabaseClient,
-	input: { userId: string; turnId: string; leaseExpiresAt: string; retryable: boolean }
+	input: { userId: string; turnId: string; turnLeaseExpiresAt: string; retryable: boolean }
 ): Promise<void> {
 	const { error } = await client.rpc('fail_chat_turn', {
 		p_user_id: input.userId,
 		p_turn_id: input.turnId,
-		p_lease_expires_at: input.leaseExpiresAt,
+		p_turn_lease_expires_at: input.turnLeaseExpiresAt,
 		p_retryable: input.retryable
 	});
 

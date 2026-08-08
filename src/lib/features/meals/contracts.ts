@@ -167,7 +167,7 @@ export type MealDuplicateInteractionV1 = {
 	resolutionTurnId: string | null;
 	resolutionOperationId: string | null;
 	resolutionReason:
-		'user_confirmed' | 'user_declined' | 'conversation_moved_on' | 'corrected_proposal' | null;
+		'user_confirmed' | 'user_declined' | 'conversation_moved_on' | 'corrected_input' | null;
 	payload: {
 		proposedMeal: MealSummary;
 		existingMealSnapshot: MealSummary;

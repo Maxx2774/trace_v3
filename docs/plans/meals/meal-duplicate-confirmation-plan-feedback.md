@@ -439,7 +439,7 @@ Flera pending proposals måste presenteras separat eller numrerat. Ett ensamt `j
 aldrig lösa flera.
 
 **Beslut 2026-08-07:** acceptera beteendet men inte nödvändigtvis den föreslagna
-top-level-typen. Orchestratorn behåller varje tool-resultat i stabil `operationIndex`-
+top-level-typen. Orchestratorn behåller varje tool-resultat i stabil `toolCallIndex`-
 ordning även när oberoende calls körs parallellt. Skapade records skickar sina vanliga
 events, och om minst en interaction väntar får samma LLM-loop alla outcomes och skriver
 ett gemensamt naturligt svar. Snabbsvaret `Registrerat` används endast när samtliga

@@ -3,15 +3,14 @@ import type { JournalRecord, TurnJournalRecord } from '$lib/features/journal/con
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type OpenAI from 'openai';
 import { runModelStep, ProviderStepError } from './provider';
+import type { ResponseRequirement } from './response-requirements';
 import { runResponseFinalizer } from './response-finalizer';
+import type { ToolExecutionOrchestration, VerifiedResponsePart } from './tools/contracts';
 import {
 	prepareToolCall,
-	type CanonicalResponsePart,
 	type PreparedToolCall,
-	type ResponseObligation,
 	type ToolCallPreparation,
-	type ToolCatalog,
-	type ToolExecutionEffects
+	type ToolCatalog
 } from './tools/registry';
 import type { PendingInteractionBinding } from './interactions';
 import {
@@ -28,7 +27,7 @@ const MODEL_STEP_TIMEOUT_MS = 35_000;
 const TURN_TIMEOUT_MS = 100_000;
 
 export type TurnOperationError = {
-	operationIndex: number;
+	toolCallIndex: number;
 	code: string;
 	correctable: boolean;
 };
@@ -60,7 +59,7 @@ export async function orchestrateChatTurn(
 		timezone: string;
 		modelInput: OpenAI.Responses.ResponseInput;
 		toolCatalog: ToolCatalog;
-		interactionBindings: PendingInteractionBinding[];
+		pendingInteractionBindings: PendingInteractionBinding[];
 		userMessage: string;
 		beginPromise: Promise<BeginChatTurnResult>;
 		signal: AbortSignal;
@@ -89,8 +88,8 @@ export async function orchestrateChatTurn(
 	let streamedText = '';
 	const records: JournalRecord[] = [];
 	const errors: TurnOperationError[] = [];
-	const canonicalParts: CanonicalResponsePart[] = [];
-	let responseObligations: ResponseObligation[] = [];
+	const verifiedResponseParts: VerifiedResponsePart[] = [];
+	let responseRequirements: ResponseRequirement[] = [];
 
 	try {
 		const pendingDeltas: string[] = [];
@@ -102,7 +101,7 @@ export async function orchestrateChatTurn(
 			dependencies.runModelStep,
 			input.toolCatalog,
 			[],
-			input.interactionBindings.length > 0 ? 'resolve_registration' : undefined
+			input.pendingInteractionBindings.length > 0 ? 'process_interaction_response' : undefined
 		);
 		void firstStepPromise.catch(() => {});
 		modelSteps += 1;
@@ -133,19 +132,25 @@ export async function orchestrateChatTurn(
 		for (const entry of begin.journalRecords) {
 			input.emit({ type: 'journal_record_created', turnId: input.turnId, record: entry.record });
 			appendRecord(records, entry.record);
-			appendCanonicalPart(canonicalParts, { kind: 'text', text: 'Registrerat' });
-			appendCanonicalPart(canonicalParts, { kind: 'journal_record', record: entry.record });
+			appendVerifiedResponsePart(verifiedResponseParts, { kind: 'text', text: 'Registrerat' });
+			appendVerifiedResponsePart(verifiedResponseParts, {
+				kind: 'journal_record',
+				record: entry.record
+			});
 		}
 
-		const recovery = recoveryEffects(begin, input.turnId);
+		const recovery = recoveryOrchestration(begin, input.turnId);
 		if (recovery) {
-			responseObligations = mergeObligations(responseObligations, recovery.responseObligations);
+			responseRequirements = mergeResponseRequirements(
+				responseRequirements,
+				recovery.responseRequirements
+			);
 			turnController.abort(new Error('recovered_tool_outcomes'));
 			const action = deriveNextAction([
 				{
 					requiresAgentContinuation: false,
-					canonicalParts,
-					responseObligations
+					verifiedResponseParts,
+					responseRequirements
 				}
 			]);
 			const content =
@@ -156,14 +161,14 @@ export async function orchestrateChatTurn(
 									referenceInstant: begin.message.createdAt,
 									timezone: input.timezone,
 									currentUserMessage: input.userMessage,
-									canonicalParts,
-									responseObligations
+									verifiedResponseParts,
+									responseRequirements
 								},
 								input.userId,
 								input.signal
 							)
 						).text
-					: canonicalText(canonicalParts);
+					: verifiedResponseText(verifiedResponseParts);
 			input.emit({ type: 'replace', turnId: input.turnId, text: content });
 			await completeAndEmit(input, begin, content, dependencies.completeChatTurn);
 			return { status: outcomeStatus(records, errors), records, errors };
@@ -177,23 +182,23 @@ export async function orchestrateChatTurn(
 		while (true) {
 			if (step.functionCalls.length === 0) {
 				if (
-					responseObligations.length > 0 &&
+					responseRequirements.length > 0 &&
 					!fulfillsExactly(
-						step.fulfilledObligationRefs,
-						responseObligations.map((obligation) => obligation.ref)
+						step.fulfilledRequirementRefs,
+						responseRequirements.map((requirement) => requirement.ref)
 					)
 				) {
 					throw new TurnTerminalError(
 						'protocol_error',
-						'Svaret uppfyllde inte alla kvarvarande svarsplikter.'
+						'Svaret uppfyllde inte alla kvarvarande svarskrav.'
 					);
 				}
-				const canonicalText = step.text.trim();
-				if (streamedText !== canonicalText) {
-					input.emit({ type: 'replace', turnId: input.turnId, text: canonicalText });
+				const verifiedText = step.text.trim();
+				if (streamedText !== verifiedText) {
+					input.emit({ type: 'replace', turnId: input.turnId, text: verifiedText });
 				}
 
-				await completeAndEmit(input, begin, canonicalText, dependencies.completeChatTurn);
+				await completeAndEmit(input, begin, verifiedText, dependencies.completeChatTurn);
 				return { status: outcomeStatus(records, errors), records, errors };
 			}
 
@@ -215,57 +220,72 @@ export async function orchestrateChatTurn(
 				input.client,
 				input.userId,
 				input.turnId,
-				begin.leaseExpiresAt,
+				begin.turnLeaseExpiresAt,
 				input.timezone,
-				input.interactionBindings
+				input.pendingInteractionBindings
 			);
 			const functionOutputs: OpenAI.Responses.ResponseInputItem.FunctionCallOutput[] = [];
 			let terminalExecutionError = false;
-			const batchEffects: ToolExecutionEffects[] = [];
+			const batchOrchestration: ToolExecutionOrchestration[] = [];
 
 			for (let index = 0; index < preparations.length; index += 1) {
 				const preparation = preparations[index];
 				if (!preparation.ok) {
 					errors.push({
-						operationIndex: functionCalls - preparations.length + index,
-						code: String(preparation.output.code),
+						toolCallIndex: functionCalls - preparations.length + index,
+						code: String(preparation.modelOutput.code),
 						correctable: preparation.correctable
 					});
 					functionOutputs.push(
-						functionOutput(preparation.callId, preparation.key, preparation.output)
+						functionOutput(
+							preparation.callId,
+							preparation.name,
+							preparation.namespace,
+							preparation.modelOutput
+						)
 					);
-					batchEffects.push({
+					batchOrchestration.push({
 						requiresAgentContinuation: preparation.correctable,
-						canonicalParts: [],
-						responseObligations: []
+						verifiedResponseParts: [],
+						responseRequirements: []
 					});
 					continue;
 				}
 
-				const result = executionResults.get(preparation.call.operationIndex);
+				const result = executionResults.get(preparation.call.toolCallIndex);
 				if (!result || result.status === 'rejected') {
 					errors.push({
-						operationIndex: preparation.call.operationIndex,
+						toolCallIndex: preparation.call.toolCallIndex,
 						code: 'tool_execution_failed',
 						correctable: false
 					});
 					terminalExecutionError = true;
 					functionOutputs.push(
-						functionOutput(preparation.call.callId, preparation.call.key, {
-							status: 'error',
-							code: 'tool_execution_failed'
-						})
+						functionOutput(
+							preparation.call.callId,
+							preparation.call.name,
+							preparation.call.namespace,
+							{
+								status: 'error',
+								code: 'tool_execution_failed'
+							}
+						)
 					);
 					continue;
 				}
 
 				const value = result.value;
 				functionOutputs.push(
-					functionOutput(preparation.call.callId, preparation.call.key, value.output)
+					functionOutput(
+						preparation.call.callId,
+						preparation.call.name,
+						preparation.call.namespace,
+						value.modelOutput
+					)
 				);
-				batchEffects.push(value.effects);
-				for (const part of value.effects.canonicalParts) {
-					appendCanonicalPart(canonicalParts, part);
+				batchOrchestration.push(value.orchestration);
+				for (const part of value.orchestration.verifiedResponseParts) {
+					appendVerifiedResponsePart(verifiedResponseParts, part);
 					if (part.kind === 'journal_record' && appendRecord(records, part.record)) {
 						input.emit({
 							type: 'journal_record_created',
@@ -274,9 +294,9 @@ export async function orchestrateChatTurn(
 						});
 					}
 				}
-				responseObligations = mergeObligations(
-					responseObligations,
-					value.effects.responseObligations
+				responseRequirements = mergeResponseRequirements(
+					responseRequirements,
+					value.orchestration.responseRequirements
 				);
 			}
 
@@ -285,15 +305,15 @@ export async function orchestrateChatTurn(
 			}
 
 			const action = deriveNextAction([
-				...batchEffects,
+				...batchOrchestration,
 				{
 					requiresAgentContinuation: false,
-					canonicalParts: [],
-					responseObligations
+					verifiedResponseParts: [],
+					responseRequirements
 				}
 			]);
 			if (action === 'complete') {
-				const content = canonicalText(canonicalParts);
+				const content = verifiedResponseText(verifiedResponseParts);
 				await completeAndEmit(input, begin, content, dependencies.completeChatTurn);
 				return { status: outcomeStatus(records, errors), records, errors };
 			}
@@ -303,8 +323,8 @@ export async function orchestrateChatTurn(
 						referenceInstant: begin.message.createdAt,
 						timezone: input.timezone,
 						currentUserMessage: input.userMessage,
-						canonicalParts,
-						responseObligations
+						verifiedResponseParts,
+						responseRequirements
 					},
 					input.userId,
 					turnController.signal
@@ -334,7 +354,7 @@ export async function orchestrateChatTurn(
 				},
 				dependencies.runModelStep,
 				input.toolCatalog,
-				responseObligations.map((obligation) => obligation.ref)
+				responseRequirements.map((requirement) => requirement.ref)
 			);
 			modelSteps += 1;
 		}
@@ -350,7 +370,7 @@ export async function orchestrateChatTurn(
 				.failChatTurn(input.client, {
 					userId: input.userId,
 					turnId: input.turnId,
-					leaseExpiresAt: begin.leaseExpiresAt,
+					turnLeaseExpiresAt: begin.turnLeaseExpiresAt,
 					retryable
 				})
 				.catch(() => {});
@@ -402,7 +422,7 @@ async function completeAndEmit(
 	const committed = await complete(input.client, {
 		userId: input.userId,
 		turnId: input.turnId,
-		leaseExpiresAt: begin.leaseExpiresAt,
+		turnLeaseExpiresAt: begin.turnLeaseExpiresAt,
 		content
 	});
 	const conversation = input.afterComplete
@@ -423,7 +443,7 @@ async function runStep(
 	onDelta: (delta: string) => void,
 	runner: typeof runModelStep,
 	toolCatalog: ToolCatalog,
-	obligationRefs: string[] = [],
+	requirementRefs: string[] = [],
 	requiredToolName?: string
 ) {
 	const controller = new AbortController();
@@ -437,7 +457,7 @@ async function runStep(
 	try {
 		return await runner(input, userId, controller.signal, onDelta, undefined, {
 			toolCatalog,
-			...(obligationRefs.length > 0 ? { obligationRefs } : {}),
+			...(requirementRefs.length > 0 ? { requirementRefs } : {}),
 			...(requiredToolName ? { requiredToolName } : {})
 		});
 	} catch (cause) {
@@ -454,9 +474,9 @@ async function executePreparedCalls(
 	client: SupabaseClient,
 	userId: string,
 	turnId: string,
-	leaseExpiresAt: string,
+	turnLeaseExpiresAt: string,
 	timezone: string,
-	interactionBindings: PendingInteractionBinding[]
+	pendingInteractionBindings: PendingInteractionBinding[]
 ) {
 	const calls = preparations
 		.filter((result): result is Extract<ToolCallPreparation, { ok: true }> => result.ok)
@@ -476,20 +496,20 @@ async function executePreparedCalls(
 						client,
 						userId,
 						turnId,
-						leaseExpiresAt,
-						operationIndex: call.operationIndex,
+						turnLeaseExpiresAt,
+						toolCallIndex: call.toolCallIndex,
 						timezone,
-						interactionBindings
+						pendingInteractionBindings
 					},
 					call.args as never
 				)
 			)
 		);
-		settled.forEach((result, index) => results.set(group[index].operationIndex, result));
+		settled.forEach((result, index) => results.set(group[index].toolCallIndex, result));
 	};
 
 	for (const call of calls) {
-		if (call.tool.policy.parallelSafe) {
+		if (call.tool.concurrency === 'parallel') {
 			parallelGroup.push(call);
 			if (parallelGroup.length === MAX_PARALLEL_CALLS) {
 				await executeGroup(parallelGroup);
@@ -508,16 +528,16 @@ async function executePreparedCalls(
 
 function functionOutput(
 	callId: string,
-	key: string,
-	output: Record<string, unknown>
+	name: string,
+	namespace: string | undefined,
+	modelOutput: Record<string, unknown>
 ): OpenAI.Responses.ResponseInputItem.FunctionCallOutput {
-	const [namespace, name] = key.split('.', 2);
 	return {
 		type: 'function_call_output',
 		call_id: callId,
-		namespace,
 		name,
-		output: JSON.stringify(output)
+		...(namespace ? { namespace } : {}),
+		output: JSON.stringify(modelOutput)
 	};
 }
 
@@ -598,14 +618,21 @@ function appendRecord(records: JournalRecord[], record: JournalRecord): boolean 
 }
 
 export function deriveNextAction(
-	effects: ToolExecutionEffects[]
+	orchestrations: ToolExecutionOrchestration[]
 ): 'complete' | 'respond' | 'continue' {
-	if (effects.some((effect) => effect.requiresAgentContinuation)) return 'continue';
-	if (effects.some((effect) => effect.responseObligations.length > 0)) return 'respond';
+	if (orchestrations.some((orchestration) => orchestration.requiresAgentContinuation)) {
+		return 'continue';
+	}
+	if (orchestrations.some((orchestration) => orchestration.responseRequirements.length > 0)) {
+		return 'respond';
+	}
 	return 'complete';
 }
 
-function appendCanonicalPart(parts: CanonicalResponsePart[], part: CanonicalResponsePart): void {
+function appendVerifiedResponsePart(
+	parts: VerifiedResponsePart[],
+	part: VerifiedResponsePart
+): void {
 	const duplicate = parts.some((candidate) => {
 		if (candidate.kind !== part.kind) return false;
 		if (candidate.kind === 'text' && part.kind === 'text') return candidate.text === part.text;
@@ -619,46 +646,44 @@ function appendCanonicalPart(parts: CanonicalResponsePart[], part: CanonicalResp
 	if (!duplicate) parts.push(part);
 }
 
-function mergeObligations(
-	current: ResponseObligation[],
-	incoming: ResponseObligation[]
-): ResponseObligation[] {
-	const merged = new Map(current.map((obligation) => [obligation.ref, obligation]));
-	for (const obligation of incoming) merged.set(obligation.ref, obligation);
+function mergeResponseRequirements(
+	current: ResponseRequirement[],
+	incoming: ResponseRequirement[]
+): ResponseRequirement[] {
+	const merged = new Map(current.map((requirement) => [requirement.ref, requirement]));
+	for (const requirement of incoming) merged.set(requirement.ref, requirement);
 	return [...merged.values()];
 }
 
-function canonicalText(parts: CanonicalResponsePart[]): string {
+function verifiedResponseText(parts: VerifiedResponsePart[]): string {
 	const text = parts
-		.filter(
-			(part): part is Extract<CanonicalResponsePart, { kind: 'text' }> => part.kind === 'text'
-		)
+		.filter((part): part is Extract<VerifiedResponsePart, { kind: 'text' }> => part.kind === 'text')
 		.map((part) => part.text)
 		.filter((value, index, values) => values.indexOf(value) === index)
 		.join('\n')
 		.trim();
 	if (!text)
-		throw new TurnTerminalError('protocol_error', 'Ett färdigt svar saknar kanonisk text.');
+		throw new TurnTerminalError('protocol_error', 'Ett färdigt svar saknar verifierad text.');
 	return text;
 }
 
-function recoveryEffects(
+function recoveryOrchestration(
 	begin: ProcessingBeginResult,
 	turnId: string
-): ToolExecutionEffects | null {
+): ToolExecutionOrchestration | null {
 	if (begin.status !== 'resumed') return null;
-	const obligations: ResponseObligation[] = [];
+	const requirements: ResponseRequirement[] = [];
 	let recovered = false;
 
 	for (const interaction of begin.interactions) {
-		const proposalIndex = operationIndex(interaction.proposalOperationId);
+		const proposalToolCallIndex = toolCallIndexFromOperationId(interaction.proposalOperationId);
 		if (interaction.proposalTurnId === turnId && interaction.status === 'prepared') {
 			recovered = true;
-			obligations.push({
-				ref: `response_${proposalIndex + 1}`,
+			requirements.push({
+				ref: `response_${proposalToolCallIndex + 1}`,
 				kind: 'ask_meal_duplicate_confirmation',
 				schemaVersion: 1,
-				confirmationRef: `pending_meal_${proposalIndex + 1}`,
+				interactionRef: `interaction_${proposalToolCallIndex + 1}`,
 				proposedMeal: interaction.payload.proposedMeal,
 				existingMeal: interaction.payload.existingMealSnapshot,
 				match: interaction.payload.matchDetails
@@ -668,13 +693,15 @@ function recoveryEffects(
 		if (interaction.resolutionTurnId === turnId) {
 			recovered = true;
 			if (interaction.status === 'discarded' && interaction.resolutionReason !== null) {
-				const resolutionIndex = operationIndex(interaction.resolutionOperationId ?? '');
+				const resolutionToolCallIndex = toolCallIndexFromOperationId(
+					interaction.resolutionOperationId ?? ''
+				);
 				if (interaction.resolutionReason !== 'user_confirmed') {
-					obligations.push({
-						ref: `response_${resolutionIndex + 1}`,
+					requirements.push({
+						ref: `response_${resolutionToolCallIndex + 1}`,
 						kind: 'acknowledge_interaction_discard',
 						schemaVersion: 1,
-						confirmationRef: `resolved_meal_${resolutionIndex + 1}`,
+						interactionRef: `interaction_${resolutionToolCallIndex + 1}`,
 						reason: interaction.resolutionReason
 					});
 				}
@@ -685,13 +712,13 @@ function recoveryEffects(
 	return recovered
 		? {
 				requiresAgentContinuation: false,
-				canonicalParts: [],
-				responseObligations: obligations
+				verifiedResponseParts: [],
+				responseRequirements: requirements
 			}
 		: null;
 }
 
-function operationIndex(operationId: string): number {
+function toolCallIndexFromOperationId(operationId: string): number {
 	const value = Number(operationId.split(':').at(-1));
 	return Number.isInteger(value) && value >= 0 ? value : 0;
 }

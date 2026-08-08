@@ -53,7 +53,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	}
 	const contextMs = performance.now() - contextStartedAt;
 	const toolCatalog = createToolCatalog({
-		hasPendingMealInteraction: modelContext.interactionBindings.length > 0
+		hasPendingInteraction: modelContext.pendingInteractionBindings.length > 0
 	});
 	const beginPromise = beginChatTurn(adminClient, {
 		userId,
@@ -68,7 +68,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			beginPromise,
 			modelInput: modelContext.messages,
 			toolCatalog,
-			interactionBindings: modelContext.interactionBindings,
+			pendingInteractionBindings: modelContext.pendingInteractionBindings,
 			userId,
 			turnId: parsed.input.turnId,
 			timezone: parsed.input.timezone,

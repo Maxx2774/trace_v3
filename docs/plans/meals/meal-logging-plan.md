@@ -146,7 +146,8 @@ generell loop med ett eller flera Responses API-anrop:
   hypotetisk måltid eller någon annans konsumtion. Modellen får göra flera calls
   för flera måltider i samma meddelande. Endast uttryckligen angivna ingredienser
   får skickas och tidsobjektets precision måste bevaras.
-- Registrera `food_log.record` som `{ effect: 'write', parallelSafe: true }`. Varje
+- Registrera `food_log.record` som
+  `{ operation: 'command', concurrency: 'parallel' }`. Varje
   call skapar en distinkt måltid under egen stabil operationsnyckel och delar inget
   write-resultat med ett annat `food_log.record`-call; flera validerade calls från
   samma modellrespons får därför exekveras bounded parallellt.
@@ -285,18 +286,16 @@ generell loop med ett eller flera Responses API-anrop:
   senare en oberoende måltid och ett symptom. Det minskar normalfallet till ett
   modellsteg för tolkning/tool calls och ett modellsteg för det naturliga
   slutsvaret.
-- Varje verktygsregistrering deklarerar serverägd exekveringspolicy:
+- Varje verktygsregistrering deklarerar operationstyp och samtidighetsläge:
 
   ```ts
-  type ToolExecutionPolicy = {
-  	effect: 'read' | 'write';
-  	parallelSafe: boolean;
-  };
+  operation: 'query' | 'command';
+  concurrency: 'parallel' | 'serial';
   ```
 
 - LLM:en får aldrig avgöra faktisk concurrency. Efter att hela modellresponsen är
-  färdig validerar servern samtliga calls. Calls som uttryckligen är
-  `parallelSafe` och saknar produktberoende får köras samtidigt med en initial
+  färdig validerar servern samtliga calls. Calls med `concurrency: 'parallel'`
+  som saknar produktberoende får köras samtidigt med en initial
   gräns på tre operationer; övriga körs sekventiellt i stabil responsordning.
   Gränsen låses eller justeras efter tool-latency- och databasmätning.
 - Använd bounded `allSettled`-semantik för parallella calls så att ett fel inte
@@ -436,7 +435,7 @@ generell loop med ett eller flera Responses API-anrop:
     slutsvar i nästa modellkörning
   - modellen kan returnera flera oberoende calls i samma respons och få samtliga
     `function_call_output` före slutsvaret
-  - `parallelSafe` fake-handlers överlappar faktiskt under en bounded gräns medan
+  - fake-handlers med `concurrency: 'parallel'` överlappar faktiskt under en bounded gräns medan
     serial handlers och beroende calls aldrig överlappar
   - ett parallellt fel avbryter inte övriga calls; outputs, journal-events och
     `TurnOutcome` följer ursprunglig call-ordning, inte completion-ordning
@@ -507,7 +506,7 @@ generell loop med ett eller flera Responses API-anrop:
   implementeras i denna slice. Deras namespaces och verktyg läggs till först i
   respektive verifierad capability-slice.
 - Ingen obegränsad eller modellstyrd parallell verktygsexekvering. Endast handlers
-  som registret uttryckligen markerar `parallelSafe` får överlappa, under en bounded
+  som registret ger `concurrency: 'parallel'` får överlappa, under en bounded
   servergräns och med deterministisk resultatsortering.
 - Ingen separat composer-modell eller `ResponseComposer`-runtime i första slicen;
   en isolerad composer är endast en evalkandidat tills den visar tydlig vinst.

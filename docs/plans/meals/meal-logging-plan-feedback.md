@@ -32,8 +32,8 @@ fortfarande förslag eller frågor.
 - **Avgränsat:** all-or-nothing över domäner kräver en uttrycklig sammansatt
   capability och införs inte som generell batch- eller rollback-runtime.
 - **Accepterat 2026-08-06:** modellen får returnera flera function calls per
-  respons. Servern parallelliserar bounded endast handlers som registret
-  uttryckligen markerar `parallelSafe` och bevarar stabil call-ordning i resultaten.
+  respons. Servern parallelliserar bounded endast handlers som registret ger
+  `concurrency: 'parallel'` och bevarar stabil call-ordning i resultaten.
 - **Accepterat 2026-08-06:** produktionen fortsätter i samma Responses-loop och
   modellkonfiguration till naturlig text. En isolerad composer jämförs endast i
   eval och får ingen runtime-adapter innan den visar tydlig vinst.
@@ -565,8 +565,8 @@ rekommenderar att båda varianterna jämförs med samma evalset innan protokolle
 stelnar över många domäner.
 
 **Beslut 2026-08-06:** behåll deferred operation tools och tillåt flera calls i
-samma modellrespons. Servern validerar hela responsens calls och kör endast
-uttryckligen `parallelSafe`, oberoende handlers samtidigt, bounded till initialt
+samma modellrespons. Servern validerar hela responsens calls och kör endast oberoende
+handlers med `concurrency: 'parallel'` samtidigt, bounded till initialt
 tre. Övriga eller beroende calls körs sekventiellt. Alla outputs och UI-events
 sorteras tillbaka till modellens call-ordning, och ett parallellt fel representeras
 som partiell framgång i stället för att avbryta övriga calls.

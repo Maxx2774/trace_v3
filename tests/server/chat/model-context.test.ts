@@ -75,12 +75,12 @@ describe('buildModelContext', () => {
 		});
 
 		const serialized = JSON.stringify(context.messages);
-		expect(serialized).toContain('pending_meal_1');
+		expect(serialized).toContain('interaction_1');
 		expect(serialized).toContain('Gröt');
 		expect(serialized).toContain('En hälsning eller en fråga om ett orelaterat ämne');
 		expect(serialized).not.toContain(interaction.id);
-		expect(context.interactionBindings).toEqual([
-			{ handle: 'pending_meal_1', kind: 'meal_duplicate', interactionId: interaction.id }
+		expect(context.pendingInteractionBindings).toEqual([
+			{ interactionRef: 'interaction_1', kind: 'meal_duplicate', interactionId: interaction.id }
 		]);
 	});
 });

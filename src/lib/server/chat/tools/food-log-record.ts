@@ -15,7 +15,7 @@ import {
 	nullableMealAmountSchema
 } from '$lib/features/meals/validation';
 import { createMealFromChat, type RecordMealInput } from '$lib/server/meals/meals';
-import type { RegisteredTool } from './registry';
+import type { RegisteredTool } from './contracts';
 import * as v from 'valibot';
 
 const localTimeSchema = v.pipe(v.string(), v.regex(LOCAL_TIME_PATTERN));
@@ -164,9 +164,11 @@ const foodLogRecordDefinition = {
 
 export const foodLogRecordTool = {
 	key: 'food_log.record',
+	exposure: 'namespace',
 	definition: foodLogRecordDefinition,
 	schema: foodLogRecordSchema,
-	policy: { effect: 'write', parallelSafe: true },
+	operation: 'command',
+	concurrency: 'parallel',
 	async execute(context, args) {
 		const input = args as v.InferOutput<typeof foodLogRecordSchema>;
 		const mealInput: RecordMealInput = {
@@ -180,34 +182,34 @@ export const foodLogRecordTool = {
 		const result = await createMealFromChat(context.client, {
 			userId: context.userId,
 			turnId: context.turnId,
-			leaseExpiresAt: context.leaseExpiresAt,
-			operationIndex: context.operationIndex,
+			turnLeaseExpiresAt: context.turnLeaseExpiresAt,
+			toolCallIndex: context.toolCallIndex,
 			meal: mealInput
 		});
 
 		if (result.status === 'confirmation_required') {
-			const confirmationRef = `pending_meal_${context.interactionBindings.length + context.operationIndex + 1}`;
-			const obligationRef = `response_${context.operationIndex + 1}`;
+			const interactionRef = `interaction_${context.pendingInteractionBindings.length + context.toolCallIndex + 1}`;
+			const requirementRef = `response_${context.toolCallIndex + 1}`;
 			return {
-				output: {
+				modelOutput: {
 					status: 'confirmation_required',
-					confirmationRef,
+					interactionRef,
 					mealCreated: false,
 					requiredAction: 'ask_for_confirmation',
-					obligationRef,
+					requirementRef,
 					proposedMeal: result.interaction.payload.proposedMeal,
 					existingMeal: result.interaction.payload.existingMealSnapshot,
 					match: result.interaction.payload.matchDetails
 				},
-				effects: {
+				orchestration: {
 					requiresAgentContinuation: input.responseRequired,
-					canonicalParts: [],
-					responseObligations: [
+					verifiedResponseParts: [],
+					responseRequirements: [
 						{
-							ref: obligationRef,
+							ref: requirementRef,
 							kind: 'ask_meal_duplicate_confirmation' as const,
 							schemaVersion: 1 as const,
-							confirmationRef,
+							interactionRef,
 							proposedMeal: result.interaction.payload.proposedMeal,
 							existingMeal: result.interaction.payload.existingMealSnapshot,
 							match: result.interaction.payload.matchDetails
@@ -227,14 +229,14 @@ export const foodLogRecordTool = {
 			value: result.meal
 		};
 		return {
-			output: { status: 'created', meal: result.meal },
-			effects: {
+			modelOutput: { status: 'created', meal: result.meal },
+			orchestration: {
 				requiresAgentContinuation: input.responseRequired,
-				canonicalParts: [
+				verifiedResponseParts: [
 					{ kind: 'text' as const, text: 'Registrerat' },
 					{ kind: 'journal_record' as const, record }
 				],
-				responseObligations: []
+				responseRequirements: []
 			}
 		};
 	}

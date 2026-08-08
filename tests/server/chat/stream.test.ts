@@ -30,7 +30,7 @@ const beginResult: BeginChatTurnResult = {
 	status: 'created',
 	conversation,
 	message: userMessage,
-	leaseExpiresAt: '2026-08-06T10:02:00.000Z',
+	turnLeaseExpiresAt: '2026-08-06T10:02:00.000Z',
 	journalRecords: [],
 	interactions: []
 };
@@ -57,8 +57,8 @@ describe('createChatResponseStream', () => {
 				adminClient: {} as SupabaseClient,
 				beginPromise: Promise.resolve(beginResult),
 				modelInput: [{ role: 'user', content: userMessage.content }],
-				toolCatalog: createToolCatalog({ hasPendingMealInteraction: false }),
-				interactionBindings: [],
+				toolCatalog: createToolCatalog({ hasPendingInteraction: false }),
+				pendingInteractionBindings: [],
 				userId: '40000000-0000-4000-8000-000000000000',
 				turnId: userMessage.turnId,
 				timezone: 'Europe/Stockholm',

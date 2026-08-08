@@ -28,6 +28,10 @@
 - Add a regression test for fixed behavioral bugs when practical.
 - Provider-contract tests must inspect the final request object used by the real network path.
 - When provider request shape, tools, model configuration, or the OpenAI SDK changes, run a minimal live-provider canary through the production request builder.
+- Treat live-provider acceptance and live semantic evaluation as separate gates. Never report a request-shape canary as verification of model behavior.
+- When model-facing instructions, tool descriptions, enums, classifications, or decision categories are added or meaningfully changed, run a mutation-free live semantic evaluation through the production context and request builders.
+- Cover every added or changed semantic category with at least one explicit expected tool-call and argument assertion. Add boundary cases when categories overlap.
+- Report provider-acceptance and semantic-evaluation results separately, including exact case counts and failures.
 - For persistent chat-protocol changes, verify that a new unrelated user message still completes normally after the affected journey.
 - Manual testing supports product and visual verification but does not replace automated behavioral coverage.
 - Report the exact verification performed, including failures, skipped checks, and unavailable tooling. Do not imply that automated tests verified visual behavior unless they actually did.

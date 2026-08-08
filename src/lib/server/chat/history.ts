@@ -25,7 +25,7 @@ export type ModelHistoryMessage = {
 export type ModelContext = {
 	messages: Array<{ role: 'user' | 'assistant' | 'developer'; content: string }>;
 	referenceBindings: Array<{ handle: string; kind: 'meal'; recordId: string }>;
-	interactionBindings: PendingInteractionBinding[];
+	pendingInteractionBindings: PendingInteractionBinding[];
 };
 
 export class ModelContextConversationNotFoundError extends Error {}
@@ -121,14 +121,16 @@ export function buildModelContext(input: {
 		input.pendingInteractions ?? [],
 		input.systemPrompt.length + dynamicContext.length + input.current.content.length
 	);
-	const interactionBindings: PendingInteractionBinding[] = pending.map((interaction, index) => ({
-		handle: `pending_meal_${index + 1}`,
-		kind: 'meal_duplicate',
-		interactionId: interaction.id
-	}));
+	const pendingInteractionBindings: PendingInteractionBinding[] = pending.map(
+		(interaction, index) => ({
+			interactionRef: `interaction_${index + 1}`,
+			kind: 'meal_duplicate',
+			interactionId: interaction.id
+		})
+	);
 	const interactionProjection = pending.map(
 		(interaction, index) =>
-			`${interactionBindings[index].handle}: ${projectPendingInteraction(interaction)}`
+			`${pendingInteractionBindings[index].interactionRef}: ${projectPendingInteraction(interaction)}`
 	);
 	const recordCharactersByTurn = new Map<string, number>();
 	for (const entry of input.journalRecords) {
@@ -191,9 +193,9 @@ export function buildModelContext(input: {
 				? [
 						{
 							role: 'developer' as const,
-							content: `Verifierade väntande måltidsbeslut:\n${interactionProjection.join(
+							content: `Verifierade väntande interactions:\n${interactionProjection.join(
 								'\n'
-							)}\nProtokollregel: hantera varje relevant väntande beslut innan du ger ett terminalt svar. Använd endast respektive handle med food_log.resolve_registration. Ett uttryckligt ja registrerar förslaget. Ett tydligt nej, en korrigering eller ett tydligt ämnesbyte discard:ar det med motsvarande reason. En hälsning eller en fråga om ett orelaterat ämne är ett tydligt ämnesbyte: svara inte direkt och lämna beslutet pending, utan anropa först resolve_registration med conversation_moved_on och responseRequired true. En faktisk följdfråga om förslaget eller ett otydligt svar får lämna det pending. Gissa inte.`
+							)}\nProtokollregel: processa varje relevant väntande interaction innan du ger ett terminalt svar. Använd endast respektive interactionRef med process_interaction_response. Klassificera hela användarmeddelandets betydelse i exakt ett responseMeaning. Ett uttryckligt ja bekräftar förslaget; använd varianten med additional_intent endast när samma meddelande också innehåller något mer som ska hanteras. Ett tydligt nej avvisar förslaget. En korrigering är corrected_input. En hälsning eller en fråga om ett orelaterat ämne är conversation_moved_on. Endast en faktisk följdfråga om förslaget är interaction_followup och endast ett genuint otydligt svar är ambiguous_response. Gissa inte.`
 						}
 					]
 				: []),
@@ -201,7 +203,7 @@ export function buildModelContext(input: {
 			{ role: 'user', content: input.current.content }
 		],
 		referenceBindings,
-		interactionBindings
+		pendingInteractionBindings
 	};
 }
 
