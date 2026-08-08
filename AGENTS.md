@@ -21,6 +21,9 @@
 ## Verification
 
 - Define concrete success criteria and verify the final code state before claiming completion.
+- For performance work, read `docs/architecture/performance/README.md` and follow its
+  cumulative document routing for the change's scope. Do not load unrelated performance
+  documents.
 - Use verification proportional to the risk:
   - Presentation-only CSS, spacing, color, typography, or icon changes: run `pnpm check` and visually inspect when layout matters.
   - Component behavior: run `pnpm check` and relevant focused tests.
