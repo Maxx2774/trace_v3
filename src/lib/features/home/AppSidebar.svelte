@@ -1,6 +1,7 @@
 <script lang="ts">
+	import { afterNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { page } from '$app/state';
+	import { navigating, page } from '$app/state';
 	import JournalActiveIcon from '$lib/components/icons/JournalActiveIcon.svelte';
 	import JournalIcon from '$lib/components/icons/JournalIcon.svelte';
 	import OverviewActiveIcon from '$lib/components/icons/OverviewActiveIcon.svelte';
@@ -26,8 +27,36 @@
 		overviewActive: boolean;
 		journalActive: boolean;
 	} = $props();
+	let pendingPathname = $state<string | null>(null);
 	let overviewHref = $derived(getPrimaryNavigationUrl(resolve('/'), page.url));
 	let journalHref = $derived(getPrimaryNavigationUrl(resolve('/journal'), page.url));
+	let overviewPending = $derived(pendingPathname === '/' && !overviewActive);
+	let journalPending = $derived(pendingPathname === '/journal' && !journalActive);
+
+	afterNavigate(() => {
+		pendingPathname = null;
+	});
+
+	function handleNavigationIntent(event: MouseEvent, pathname: string) {
+		if (
+			event.defaultPrevented ||
+			event.button !== 0 ||
+			event.metaKey ||
+			event.ctrlKey ||
+			event.shiftKey ||
+			event.altKey ||
+			pathname === page.url.pathname
+		) {
+			return;
+		}
+
+		pendingPathname = pathname;
+		requestAnimationFrame(() => {
+			if (pendingPathname === pathname && navigating.to?.url.pathname !== pathname) {
+				pendingPathname = null;
+			}
+		});
+	}
 </script>
 
 <button
@@ -74,18 +103,22 @@
 	<nav aria-label="Trace">
 		<a
 			class:active={overviewActive}
+			class:pending={overviewPending}
 			href={resolve(overviewHref)}
 			aria-current={overviewActive ? 'page' : undefined}
+			onclick={(event) => handleNavigationIntent(event, '/')}
 		>
-			{#if overviewActive}<OverviewActiveIcon />{:else}<OverviewIcon />{/if}
+			{#if overviewActive || overviewPending}<OverviewActiveIcon />{:else}<OverviewIcon />{/if}
 			<span>Översikt</span>
 		</a>
 		<a
 			class:active={journalActive}
+			class:pending={journalPending}
 			href={resolve(journalHref)}
 			aria-current={journalActive ? 'page' : undefined}
+			onclick={(event) => handleNavigationIntent(event, '/journal')}
 		>
-			{#if journalActive}<JournalActiveIcon />{:else}<JournalIcon />{/if}
+			{#if journalActive || journalPending}<JournalActiveIcon />{:else}<JournalIcon />{/if}
 			<span>Journal</span>
 		</a>
 	</nav>
@@ -206,6 +239,7 @@
 	}
 
 	nav a.active,
+	nav a.pending,
 	nav a:hover {
 		background: var(--surface-hover);
 	}

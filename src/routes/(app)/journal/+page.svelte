@@ -62,7 +62,6 @@
 
 	<section
 		class="journal-content"
-		hidden={activeTab === 'meals'}
 		aria-label={activeTab === 'meals' ? 'Måltider' : 'Alla journalposter'}
 	>
 		{#if meals.length > 0}
