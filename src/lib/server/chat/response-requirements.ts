@@ -18,5 +18,13 @@ export type InteractionDiscardAcknowledgementRequirementV1 = {
 	reason: 'user_declined' | 'conversation_moved_on' | 'corrected_input';
 };
 
+export type RecoveredInteractionIntentRequirementV1 = {
+	ref: string;
+	kind: 'complete_recovered_interaction_intent';
+	schemaVersion: 1;
+};
+
 export type ResponseRequirement =
-	MealDuplicateConfirmationRequirementV1 | InteractionDiscardAcknowledgementRequirementV1;
+	| MealDuplicateConfirmationRequirementV1
+	| InteractionDiscardAcknowledgementRequirementV1
+	| RecoveredInteractionIntentRequirementV1;

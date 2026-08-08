@@ -675,7 +675,7 @@ function recoveryOrchestration(
 	const requirements: ResponseRequirement[] = [];
 	let recovered = false;
 
-	for (const interaction of begin.interactions) {
+	for (const [interactionIndex, interaction] of begin.interactions.entries()) {
 		const proposalToolCallIndex = toolCallIndexFromOperationId(interaction.proposalOperationId);
 		if (interaction.proposalTurnId === turnId && interaction.status === 'prepared') {
 			recovered = true;
@@ -692,6 +692,13 @@ function recoveryOrchestration(
 
 		if (interaction.resolutionTurnId === turnId) {
 			recovered = true;
+			if (interaction.status === 'confirmed') {
+				requirements.push({
+					ref: `recovery_interaction_${interactionIndex + 1}`,
+					kind: 'complete_recovered_interaction_intent',
+					schemaVersion: 1
+				});
+			}
 			if (interaction.status === 'discarded' && interaction.resolutionReason !== null) {
 				const resolutionToolCallIndex = toolCallIndexFromOperationId(
 					interaction.resolutionOperationId ?? ''

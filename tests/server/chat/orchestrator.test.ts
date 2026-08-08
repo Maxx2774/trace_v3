@@ -106,12 +106,12 @@ describe('orchestrateChatTurn', () => {
 			.fn()
 			.mockResolvedValueOnce({ mode: 'tool', text: '', output: [call], functionCalls: [call] })
 			.mockImplementationOnce(async (modelInput: OpenAI.Responses.ResponseInput) => {
-				expect(modelInput.at(-1)).toMatchObject({
+				expect(modelInput.at(-1)).toEqual({
 					type: 'function_call_output',
 					call_id: 'call_interaction',
-					name: 'process_interaction_response'
+					name: 'process_interaction_response',
+					output: '{"status":"registered"}'
 				});
-				expect(modelInput.at(-1)).not.toHaveProperty('namespace');
 				return textStep('Måltiden är registrerad. Jag hjälper dig med resten.');
 			});
 		const rpc = vi.fn(async () => ({
@@ -436,6 +436,85 @@ describe('orchestrateChatTurn', () => {
 		expect(events.map((event) => event.type)).toEqual(['conversation', 'replace', 'done']);
 	});
 
+	it('recovers a committed confirmation from the canonical journal record and finalizes remaining intent', async () => {
+		const canonicalMeal = meal(0, 'Havregröt med banan');
+		const interaction = duplicateInteraction({
+			status: 'confirmed',
+			resolutionTurnId: userMessage.turnId,
+			resolutionOperationId: `${userMessage.turnId}:0`,
+			resolutionReason: 'user_confirmed',
+			resolvedAt: '2026-08-06T10:00:01.000Z'
+		});
+		const finalizer = vi.fn(async () => ({
+			text: 'Måltiden innehöll havregröt med banan.',
+			fulfilledRequirementRefs: ['recovery_interaction_1']
+		}));
+		const rpc = vi.fn();
+		const events: ChatStreamEvent[] = [];
+		const begin = resumedBegin(
+			[interaction],
+			[
+				{
+					turnId: userMessage.turnId,
+					record: {
+						kind: 'meal',
+						reference: {
+							type: 'meal',
+							recordId: canonicalMeal.id,
+							committedRevision: canonicalMeal.revision
+						},
+						value: canonicalMeal
+					}
+				}
+			]
+		);
+
+		await orchestrateChatTurn(
+			{
+				...turnInput(Promise.resolve(begin), events),
+				userMessage: 'Ja, registrera den. Vad innehöll måltiden?',
+				client: { rpc } as unknown as SupabaseClient
+			},
+			{
+				runModelStep: vi.fn(async () => textStep('ignoreras')) as never,
+				runResponseFinalizer: finalizer as never,
+				completeChatTurn: vi.fn(async (_client, input) => ({
+					message: { ...assistantMessage, content: input.content },
+					conversation
+				})),
+				failChatTurn: vi.fn()
+			}
+		);
+
+		expect(rpc).not.toHaveBeenCalled();
+		expect(finalizer).toHaveBeenCalledWith(
+			expect.objectContaining({
+				currentUserMessage: 'Ja, registrera den. Vad innehöll måltiden?',
+				verifiedResponseParts: expect.arrayContaining([
+					expect.objectContaining({
+						kind: 'journal_record',
+						record: expect.objectContaining({ value: canonicalMeal })
+					})
+				]),
+				responseRequirements: [
+					{
+						ref: 'recovery_interaction_1',
+						kind: 'complete_recovered_interaction_intent',
+						schemaVersion: 1
+					}
+				]
+			}),
+			expect.any(String),
+			expect.any(AbortSignal)
+		);
+		expect(events.map((event) => event.type)).toEqual([
+			'conversation',
+			'journal_record_created',
+			'replace',
+			'done'
+		]);
+	});
+
 	it('prioritizes continuation over requirements and requirements over deterministic completion', () => {
 		expect(
 			deriveNextAction([
@@ -632,14 +711,15 @@ function duplicateInteraction(
 }
 
 function resumedBegin(
-	interactions: MealDuplicateInteractionV1[]
+	interactions: MealDuplicateInteractionV1[],
+	journalRecords: Extract<BeginChatTurnResult, { status: 'resumed' }>['journalRecords'] = []
 ): Extract<BeginChatTurnResult, { status: 'resumed' }> {
 	return {
 		status: 'resumed',
 		conversation,
 		message: userMessage,
 		turnLeaseExpiresAt: '2026-08-06T10:02:00.000Z',
-		journalRecords: [],
+		journalRecords,
 		interactions
 	};
 }

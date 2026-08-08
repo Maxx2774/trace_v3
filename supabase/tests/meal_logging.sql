@@ -462,6 +462,7 @@ declare
 	v_turn_d uuid := gen_random_uuid();
 	v_turn_e uuid := gen_random_uuid();
 	v_turn_f uuid := gen_random_uuid();
+	v_turn_g uuid := gen_random_uuid();
 	v_other_turn uuid := gen_random_uuid();
 	v_conversation_id uuid;
 	v_other_conversation_id uuid;
@@ -469,6 +470,9 @@ declare
 	v_other_lease timestamptz;
 	v_interaction_id uuid;
 	v_second_interaction_id uuid;
+	v_registered_meal_id uuid;
+	v_meal_count_before integer;
+	v_proposal jsonb;
 	v_result jsonb;
 	v_replay jsonb;
 begin
@@ -515,7 +519,7 @@ begin
 		'2026-08-01',
 		'Europe/Stockholm',
 		null,
-		'[{"name":"Havre  gröt","amountText":"1 skål","ingredients":[]}]'::jsonb
+		'[{"name":"Havre  gröt","amountText":"1 skål","ingredients":[{"name":"Banan","amountText":"1 st"}]}]'::jsonb
 	);
 	assert v_result ->> 'status' = 'created', 'first historical meal must be created';
 	perform public.complete_chat_turn(v_user_id, v_turn_a, v_lease, 'Registrerat');
@@ -535,7 +539,7 @@ begin
 		'2026-08-01',
 		'Europe/Stockholm',
 		null,
-		'[{"name":"havre gröt","amountText":"1 skål","ingredients":[]}]'::jsonb
+		'[{"name":"havre gröt","amountText":"1 skål","ingredients":[{"name":"Banan","amountText":"1 st"}]}]'::jsonb
 	);
 	assert v_result ->> 'status' = 'confirmation_required',
 		'an identical historical date-only meal must require confirmation';
@@ -556,7 +560,7 @@ begin
 		'2026-08-01',
 		'Europe/Stockholm',
 		null,
-		'[{"name":"havre gröt","amountText":"1 skål","ingredients":[]}]'::jsonb
+		'[{"name":"havre gröt","amountText":"1 skål","ingredients":[{"name":"Banan","amountText":"1 st"}]}]'::jsonb
 	);
 	assert (v_replay #>> '{interaction,id}')::uuid = v_interaction_id,
 		'same proposal operation must replay the same interaction';
@@ -583,20 +587,135 @@ begin
 		from public.pending_interactions where id = v_interaction_id
 	), 'assistant commit must activate the interaction atomically';
 
-	v_result := public.begin_chat_turn(v_user_id, v_conversation_id, v_turn_c, 'Ja', 120);
+	v_result := public.begin_chat_turn(
+		v_user_id,
+		v_conversation_id,
+		v_turn_c,
+		'Ja, registrera den. Vad innehöll måltiden?',
+		120
+	);
 	v_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
+	select payload -> 'proposedMeal'
+	into v_proposal
+	from public.pending_interactions
+	where id = v_interaction_id;
+	select count(*) into v_meal_count_before from public.meals where user_id = v_user_id;
 	v_result := public.resolve_meal_duplicate_interaction(
 		v_user_id, v_turn_c, v_lease, 0, v_interaction_id, 'register', null
 	);
 	assert v_result ->> 'status' = 'registered', 'explicit confirmation must create the meal';
-	assert (select count(*) from public.meals where user_id = v_user_id) = 2,
+	v_registered_meal_id := (v_result #>> '{meal,id}')::uuid;
+	assert (select count(*) from public.meals where user_id = v_user_id) = v_meal_count_before + 1,
 		'confirmation must create exactly one additional meal';
+	assert (
+		select meal_type is not distinct from v_proposal ->> 'mealType'
+			and occurred_precision = v_proposal #>> '{occurrence,precision}'
+			and occurred_at is not distinct from (v_proposal #>> '{occurrence,occurredAt}')::timestamptz
+			and occurred_on is not distinct from (v_proposal #>> '{occurrence,occurredOn}')::date
+			and timezone is not distinct from v_proposal #>> '{occurrence,timezone}'
+			and time_period is not distinct from v_proposal #>> '{occurrence,timePeriod}'
+		from public.meals
+		where id = v_registered_meal_id and user_id = v_user_id
+	), 'confirmed meal type and occurrence must preserve the proposal semantics';
+	assert (
+		select coalesce(
+			jsonb_agg(
+				jsonb_build_object(
+					'name', item.name,
+					'amountText', item.amount_text,
+					'ingredients', coalesce(
+						(
+							select jsonb_agg(
+								jsonb_build_object(
+									'name', ingredient.name,
+									'amountText', ingredient.amount_text
+								)
+								order by ingredient.position
+							)
+							from public.meal_item_ingredients ingredient
+							where ingredient.meal_item_id = item.id
+						),
+						'[]'::jsonb
+					)
+				)
+				order by item.position
+			),
+			'[]'::jsonb
+		)
+		from public.meal_items item
+		where item.meal_id = v_registered_meal_id
+	) = v_proposal -> 'items',
+		'confirmed items, amounts and ingredients must preserve the proposal semantics';
+	assert (
+		select status = 'confirmed'
+			and resolution_operation_id = v_turn_c::text || ':0'
+		from public.pending_interactions
+		where id = v_interaction_id
+	), 'confirmation must resolve the addressed interaction with the resolution operation';
+	assert (
+		select meal.source_operation_id = interaction.resolution_operation_id
+		from public.meals meal
+		join public.pending_interactions interaction on interaction.id = v_interaction_id
+		where meal.id = v_registered_meal_id
+	), 'interaction and canonical meal must share the same operation id';
 	v_replay := public.resolve_meal_duplicate_interaction(
 		v_user_id, v_turn_c, v_lease, 0, v_interaction_id, 'register', null
 	);
 	assert v_replay ->> 'status' = 'registered' and (v_replay ->> 'replayed')::boolean,
 		'resolution retry must replay the same registered meal';
-	perform public.complete_chat_turn(v_user_id, v_turn_c, v_lease, 'Registrerat');
+	assert (v_replay #>> '{meal,id}')::uuid = v_registered_meal_id,
+		'resolution replay must return the same canonical meal';
+	assert (select count(*) from public.meals where user_id = v_user_id) = v_meal_count_before + 1,
+		'resolution replay must not create another meal';
+	perform public.fail_chat_turn(v_user_id, v_turn_c, v_lease, true);
+	v_result := public.begin_chat_turn(
+		v_user_id,
+		v_conversation_id,
+		v_turn_c,
+		'Ja, registrera den. Vad innehöll måltiden?',
+		120
+	);
+	assert v_result ->> 'status' = 'resumed',
+		'retry after the domain commit must resume the same turn';
+	v_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
+	assert jsonb_array_length(v_result -> 'journalRecords') = 1,
+		'begin_chat_turn must recover the committed journal record';
+	assert (v_result #>> '{journalRecords,0,record,value,id}')::uuid = v_registered_meal_id,
+		'recovery must use the committed canonical meal as content truth';
+	assert (
+		select status = 'confirmed'
+			and resolution_turn_id = v_turn_c
+			and resolution_operation_id = v_turn_c::text || ':0'
+		from public.pending_interactions
+		where id = v_interaction_id
+	), 'recovery must observe the already resolved interaction state';
+	assert (select count(*) from public.meals where user_id = v_user_id) = v_meal_count_before + 1,
+		'recovery must not create a second meal';
+	perform public.complete_chat_turn(
+		v_user_id,
+		v_turn_c,
+		v_lease,
+		'Måltiden innehöll havregröt med banan.'
+	);
+	assert (
+		select status = 'confirmed'
+			and resolution_operation_id = v_turn_c::text || ':0'
+		from public.pending_interactions
+		where id = v_interaction_id
+	), 'recovery completion must not mutate the interaction again';
+
+	v_result := public.begin_chat_turn(
+		v_user_id, v_conversation_id, v_turn_g, 'Hur ser resten av dagen ut?', 120
+	);
+	assert v_result ->> 'status' = 'created',
+		'an unrelated message after confirmation must start normally';
+	v_lease := (v_result ->> 'turnLeaseExpiresAt')::timestamptz;
+	perform public.complete_chat_turn(v_user_id, v_turn_g, v_lease, 'Det ser lugnt ut.');
+	assert (
+		select status = 'completed'
+		from public.turns
+		where id = v_turn_g and user_id = v_user_id
+	), 'an unrelated message after confirmation must complete normally';
 
 	v_result := public.begin_chat_turn(
 		v_user_id, v_conversation_id, v_turn_d, 'Jag åt havregröt i lördags igen', 120
@@ -613,7 +732,7 @@ begin
 		'2026-08-01',
 		'Europe/Stockholm',
 		null,
-		'[{"name":"Havre gröt","amountText":"1 skål","ingredients":[]}]'::jsonb
+		'[{"name":"Havre gröt","amountText":"1 skål","ingredients":[{"name":"Banan","amountText":"1 st"}]}]'::jsonb
 	);
 	v_second_interaction_id := (v_result #>> '{interaction,id}')::uuid;
 	assert (v_result #>> '{interaction,payload,matchDetails,candidateCount}')::integer = 2,

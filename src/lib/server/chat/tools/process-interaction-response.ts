@@ -109,7 +109,7 @@ export const processInteractionResponseTool = {
 						value: result.meal
 					};
 					return {
-						modelOutput: { status: 'registered', meal: result.meal },
+						modelOutput: { status: 'registered' },
 						orchestration: {
 							requiresAgentContinuation: action.requiresAgentContinuation,
 							verifiedResponseParts: [

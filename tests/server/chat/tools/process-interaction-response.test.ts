@@ -130,7 +130,20 @@ describe('process_interaction_response', () => {
 				p_reason: reason
 			});
 			expect(result.orchestration.requiresAgentContinuation).toBe(requiresAgentContinuation);
-			expect(result.modelOutput.status).toBe(decision === 'register' ? 'registered' : 'discarded');
+			if (decision === 'register') {
+				expect(result.modelOutput).toEqual({ status: 'registered' });
+				expect(result.orchestration.verifiedResponseParts).toEqual([
+					{ kind: 'text', text: 'Registrerat' },
+					expect.objectContaining({
+						kind: 'journal_record',
+						record: expect.objectContaining({
+							value: meal
+						})
+					})
+				]);
+			} else {
+				expect(result.modelOutput.status).toBe('discarded');
+			}
 			expect(result.orchestration.verifiedResponseParts).toHaveLength(
 				decision === 'register' ? 2 : 0
 			);
