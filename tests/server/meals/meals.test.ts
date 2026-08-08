@@ -3,6 +3,7 @@ import {
 	MealNotFoundError,
 	MealRevisionConflictError,
 	createMealFromChat,
+	listOwnedMeals,
 	mapMeal,
 	resolveMealDuplicateInteraction,
 	updateOwnedMeal
@@ -184,6 +185,61 @@ describe('mapMeal', () => {
 		]);
 	});
 });
+
+describe('listOwnedMeals', () => {
+	it('filters by owner and orders the complete journal chronologically', async () => {
+		const row = {
+			id: input.id,
+			revision: 2,
+			meal_type: 'breakfast' as const,
+			occurred_precision: 'date' as const,
+			occurred_at: null,
+			occurred_on: '2026-08-06',
+			timezone: 'Europe/Stockholm',
+			time_period: null,
+			created_at: '2026-08-06T18:00:00.000Z',
+			updated_at: '2026-08-06T18:01:00.000Z',
+			meal_items: [
+				{
+					id: 'a',
+					position: 0,
+					name: 'Gröt',
+					amount_text: null,
+					meal_item_ingredients: []
+				}
+			]
+		};
+		const result = { data: [row], error: null };
+		const builder = {
+			select: vi.fn(),
+			eq: vi.fn(),
+			order: vi.fn(),
+			then: resultThen(result)
+		};
+		builder.select.mockReturnValue(builder);
+		builder.eq.mockReturnValue(builder);
+		builder.order.mockReturnValue(builder);
+		const from = vi.fn(() => builder);
+		const client = { from } as unknown as SupabaseClient;
+
+		await expect(listOwnedMeals(client, 'user-id')).resolves.toEqual([mapMeal(row)]);
+		expect(from).toHaveBeenCalledWith('meals');
+		expect(builder.eq).toHaveBeenCalledWith('user_id', 'user-id');
+		expect(builder.order.mock.calls).toEqual([
+			['occurred_on', { ascending: false, nullsFirst: false }],
+			['occurred_at', { ascending: false, nullsFirst: false }],
+			['created_at', { ascending: false }],
+			['id', { ascending: false }]
+		]);
+	});
+});
+
+function resultThen<T>(result: T) {
+	return <TResult1 = T, TResult2 = never>(
+		onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
+		onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+	) => Promise.resolve(result).then(onfulfilled, onrejected);
+}
 
 function interaction(meal: ReturnType<typeof mealFixture>) {
 	const summary = {

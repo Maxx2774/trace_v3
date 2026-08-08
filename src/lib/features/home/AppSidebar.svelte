@@ -3,6 +3,8 @@
 	import { page } from '$app/state';
 	import Wordmark from '$lib/components/brand/Wordmark.svelte';
 	import ChevronRightIcon from '$lib/components/icons/ChevronRightIcon.svelte';
+	import JournalActiveIcon from '$lib/components/icons/JournalActiveIcon.svelte';
+	import JournalIcon from '$lib/components/icons/JournalIcon.svelte';
 	import OverviewActiveIcon from '$lib/components/icons/OverviewActiveIcon.svelte';
 	import OverviewIcon from '$lib/components/icons/OverviewIcon.svelte';
 	import AccountMenu from '$lib/features/auth/AccountMenu.svelte';
@@ -14,7 +16,8 @@
 		onToggle,
 		onClose,
 		displayName,
-		overviewActive
+		overviewActive,
+		journalActive
 	}: {
 		open: boolean;
 		chatOpen: boolean;
@@ -22,8 +25,10 @@
 		onClose: () => void;
 		displayName: string;
 		overviewActive: boolean;
+		journalActive: boolean;
 	} = $props();
 	let overviewHref = $derived(getPrimaryNavigationUrl(resolve('/'), page.url));
+	let journalHref = $derived(getPrimaryNavigationUrl(resolve('/journal'), page.url));
 </script>
 
 <button
@@ -62,6 +67,14 @@
 		>
 			{#if overviewActive}<OverviewActiveIcon />{:else}<OverviewIcon />{/if}
 			<span>Översikt</span>
+		</a>
+		<a
+			class:active={journalActive}
+			href={resolve(journalHref)}
+			aria-current={journalActive ? 'page' : undefined}
+		>
+			{#if journalActive}<JournalActiveIcon />{:else}<JournalIcon />{/if}
+			<span>Journal</span>
 		</a>
 	</nav>
 	<div class="spacer"></div>

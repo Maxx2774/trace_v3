@@ -40,11 +40,13 @@
 	let {
 		meal,
 		editable = false,
+		editorPresentation = 'overlay',
 		onUpdated,
 		onReloadRequested
 	}: {
 		meal: Meal;
 		editable?: boolean;
+		editorPresentation?: 'overlay' | 'inline';
 		onUpdated?: (meal: Meal) => void;
 		onReloadRequested?: () => void;
 	} = $props();
@@ -90,13 +92,15 @@
 		editButtonSuppressed = false;
 		errorMessage = null;
 		revisionConflict = false;
-		restingHeight = cardElement?.getBoundingClientRect().height ?? null;
-		updateOverlayBounds();
+		restingHeight =
+			editorPresentation === 'overlay'
+				? (cardElement?.getBoundingClientRect().height ?? null)
+				: null;
+		if (editorPresentation === 'overlay') updateOverlayBounds();
 		editing = true;
 		await tick();
-		updateOverlayBounds();
-		if (!cardElement || !overlayBounds || prefersReducedMotion())
-			return;
+		if (editorPresentation === 'overlay') updateOverlayBounds();
+		if (!cardElement || !overlayBounds || prefersReducedMotion()) return;
 		const revealMotion = getRevealMotion(cardElement);
 		overlayAnimation?.cancel();
 		overlayAnimation = cardElement.animate(
@@ -115,12 +119,18 @@
 		closing = true;
 		overlayAnimation?.cancel();
 		viewAnimation?.cancel();
-		if (cardElement && overlayBounds && !prefersReducedMotion()) {
+		if (
+			editorPresentation === 'overlay' &&
+			cardElement &&
+			overlayBounds &&
+			!prefersReducedMotion()
+		) {
 			await tick();
-			overlayAnimation = cardElement.animate(
-				[{ opacity: 1 }, { opacity: 0 }],
-				{ duration: 260, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' }
-			);
+			overlayAnimation = cardElement.animate([{ opacity: 1 }, { opacity: 0 }], {
+				duration: 260,
+				easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+				fill: 'forwards'
+			});
 			if (previewElement) {
 				viewAnimation = previewElement.animate([{ opacity: 0 }, { opacity: 1 }], {
 					duration: 260,
@@ -163,7 +173,10 @@
 		const slot = slotElement.getBoundingClientRect();
 		const inset = 8;
 		const availableHeight = Math.max(0, view.height - inset * 2);
-		const cardHeight = Math.min(cardElement?.getBoundingClientRect().height ?? slot.height, availableHeight);
+		const cardHeight = Math.min(
+			cardElement?.getBoundingClientRect().height ?? slot.height,
+			availableHeight
+		);
 		const preferredCenterY = slot.top + slot.height / 2;
 		const minimumCenterY = view.top + inset + cardHeight / 2;
 		const maximumCenterY = view.bottom - inset - cardHeight / 2;
@@ -184,7 +197,7 @@
 	const trackCardSize: Attachment<HTMLElement> = (node) => {
 		cardElement = node;
 		const observer = new ResizeObserver(() => {
-			if (editing) updateOverlayBounds();
+			if (editing && editorPresentation === 'overlay') updateOverlayBounds();
 		});
 		observer.observe(node);
 		return () => {
@@ -200,8 +213,15 @@
 		};
 	};
 
+	const trackSlot: Attachment<HTMLDivElement> = (node) => {
+		slotElement = node;
+		return () => {
+			if (slotElement === node) slotElement = null;
+		};
+	};
+
 	function handleWindowResize() {
-		if (editing) updateOverlayBounds();
+		if (editing && editorPresentation === 'overlay') updateOverlayBounds();
 	}
 
 	function handleWindowKeydown(event: KeyboardEvent) {
@@ -372,9 +392,7 @@
 				editorActive={editMode && editor !== null}
 				canRemove={meal.items.length > 1}
 				itemDraft={editMode && editor?.kind === 'item' && editor.id === item.id ? editor : null}
-				ingredientDraft={editMode &&
-					editor?.kind === 'ingredient' &&
-					editor.itemId === item.id
+				ingredientDraft={editMode && editor?.kind === 'ingredient' && editor.itemId === item.id
 					? editor
 					: null}
 				onEditItem={() => editItem(item.id)}
@@ -393,7 +411,7 @@
 {/snippet}
 
 <div
-	bind:this={slotElement}
+	{@attach trackSlot}
 	class="meal-card-slot"
 	style:height={editing && restingHeight !== null ? `${restingHeight}px` : undefined}
 >
@@ -415,105 +433,105 @@
 		</article>
 	{/if}
 
-<article
-	{@attach trackCardSize}
-	class={[
-		'meal-card',
-		editing && 'editing',
-		closing && 'closing',
-		editButtonSuppressed && 'edit-button-suppressed',
-		meal.items.length > 1 && 'multi-item',
-		overlayBounds && 'overlay',
-		editable && 'editable'
-	]}
-	aria-label="Registrerad måltid"
-	style={overlayStyle}
->
-	{#if editing}
-		<div class="meal-heading">
-			<Select
-				value={selectedMealType}
-				options={MEAL_TYPE_OPTIONS}
-				placeholder="Välj måltidstyp"
-				label="Måltidstyp"
-				disabled={saving}
-				onValueChange={changeMealType}
-			/>
-			<span class="time-label">{timeLabel}</span>
-		</div>
+	<article
+		{@attach trackCardSize}
+		class={[
+			'meal-card',
+			editing && 'editing',
+			closing && 'closing',
+			editButtonSuppressed && 'edit-button-suppressed',
+			meal.items.length > 1 && 'multi-item',
+			overlayBounds && 'overlay',
+			editable && 'editable'
+		]}
+		aria-label="Registrerad måltid"
+		style={overlayStyle}
+	>
+		{#if editing}
+			<div class="meal-heading">
+				<Select
+					value={selectedMealType}
+					options={MEAL_TYPE_OPTIONS}
+					placeholder="Välj måltidstyp"
+					label="Måltidstyp"
+					disabled={saving}
+					onValueChange={changeMealType}
+				/>
+				<span class="time-label">{timeLabel}</span>
+			</div>
 
-		<button class="change-time-button" type="button" disabled={saving} onclick={editOccurrence}>
-			Ändra datum och tid
-		</button>
-	{/if}
+			<button class="change-time-button" type="button" disabled={saving} onclick={editOccurrence}>
+				Ändra datum och tid
+			</button>
+		{/if}
 
-	{#if editor?.kind === 'occurrence'}
-		<MealOccurrenceEditor
-			draft={editor}
-			{saving}
-			onChange={(draft) => (editor = { kind: 'occurrence', ...draft })}
-			onSave={saveOccurrence}
-			onCancel={() => (editor = null)}
-		/>
-	{/if}
-
-	{@render mealItems(editing)}
-
-	{#if editing}
-		{#if editor?.kind === 'item' && editor.id === null}
-			<MealEntryEditor
+		{#if editor?.kind === 'occurrence'}
+			<MealOccurrenceEditor
 				draft={editor}
 				{saving}
-				variant="new-item"
-				onChange={(draft) => (editor = { kind: 'item', ...draft })}
-				onSave={saveItem}
+				onChange={(draft) => (editor = { kind: 'occurrence', ...draft })}
+				onSave={saveOccurrence}
 				onCancel={() => (editor = null)}
 			/>
-		{:else}
-			<button
-				class="add-item-button"
-				type="button"
-				disabled={saving || editor !== null}
-				onclick={addItem}>Lägg till mat eller dryck</button
-			>
 		{/if}
-	{/if}
 
-	{#if errorMessage}
-		<div class="edit-error" role="status">
-			<span>{errorMessage}</span>
-			{#if revisionConflict}
-				<button type="button" onclick={() => onReloadRequested?.()}>Ladda om</button>
-			{/if}
-		</div>
-	{/if}
+		{@render mealItems(editing)}
 
-	{#if editable}
-		<div class={['edit-button', editing && 'editing']}>
-			{#if editing}
-				<Button
-					variant="ghost"
-					size="compact"
-					type="button"
-					leadingIcon={CheckmarkIcon}
-					aria-label="Avsluta redigering"
-					disabled={saving || closing}
-					onclick={finishEditing}
+		{#if editing}
+			{#if editor?.kind === 'item' && editor.id === null}
+				<MealEntryEditor
+					draft={editor}
+					{saving}
+					variant="new-item"
+					onChange={(draft) => (editor = { kind: 'item', ...draft })}
+					onSave={saveItem}
+					onCancel={() => (editor = null)}
 				/>
 			{:else}
-				<Button
-					variant="ghost"
-					size="compact"
+				<button
+					class="add-item-button"
 					type="button"
-					leadingIcon={EditIcon}
-					aria-label="Redigera måltid"
-					disabled={saving}
-					onclick={beginEditing}
-				/>
+					disabled={saving || editor !== null}
+					onclick={addItem}>Lägg till mat eller dryck</button
+				>
 			{/if}
-		</div>
-	{/if}
-</article>
+		{/if}
+
+		{#if errorMessage}
+			<div class="edit-error" role="status">
+				<span>{errorMessage}</span>
+				{#if revisionConflict}
+					<button type="button" onclick={() => onReloadRequested?.()}>Ladda om</button>
+				{/if}
+			</div>
+		{/if}
+
+		{#if editable}
+			<div class={['edit-button', editing && 'editing']}>
+				{#if editing}
+					<Button
+						variant="ghost"
+						size="compact"
+						type="button"
+						leadingIcon={CheckmarkIcon}
+						aria-label="Avsluta redigering"
+						disabled={saving || closing}
+						onclick={finishEditing}
+					/>
+				{:else}
+					<Button
+						variant="ghost"
+						size="compact"
+						type="button"
+						leadingIcon={EditIcon}
+						aria-label="Redigera måltid"
+						disabled={saving}
+						onclick={beginEditing}
+					/>
+				{/if}
+			</div>
+		{/if}
+	</article>
 </div>
 
 <style>

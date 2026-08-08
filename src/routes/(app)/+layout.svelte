@@ -64,6 +64,7 @@
 		onClose={() => setSidebar(false)}
 		displayName={data.displayName}
 		overviewActive={page.url.pathname === '/'}
+		journalActive={page.url.pathname === '/journal'}
 	/>
 
 	<div class="app-content">

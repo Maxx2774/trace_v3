@@ -196,6 +196,20 @@ export async function updateOwnedMeal(
 	return data as Meal;
 }
 
+export async function listOwnedMeals(client: SupabaseClient, userId: string): Promise<Meal[]> {
+	const { data, error } = await client
+		.from('meals')
+		.select(MEAL_SELECTION)
+		.eq('user_id', userId)
+		.order('occurred_on', { ascending: false, nullsFirst: false })
+		.order('occurred_at', { ascending: false, nullsFirst: false })
+		.order('created_at', { ascending: false })
+		.order('id', { ascending: false });
+
+	if (error) throw error;
+	return ((data ?? []) as unknown as MealRow[]).map(mapMeal);
+}
+
 export async function listConversationJournalRecords(
 	client: SupabaseClient,
 	userId: string,

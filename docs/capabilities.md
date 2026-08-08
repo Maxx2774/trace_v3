@@ -87,6 +87,10 @@ funktionalitet hör hemma i `product.md`.
   omladdning i stället för att visa osparad data som kanonisk.
 - Måltidskort återställs från referenser i den sparade konversationen och batchhydreras med
   den senaste kanoniska revisionen. Startsidan visar ingen separat måltidsöversikt.
+- Journal-sidan visar användarens samtliga sparade måltider från den kanoniska
+  måltidsstrukturen, sorterade efter konsumtionsdatum och tid med poster utan känd tid sist.
+  Måltiderna kan redigeras direkt i journalen med samma atomiska och revisionsskyddade
+  serverflöde som används från konversationen.
 
 ## Sparade konversationer
 
@@ -136,6 +140,9 @@ funktionalitet hör hemma i `product.md`.
 ## Gränssnitt
 
 - Chatten visas i en responsiv panel med separata vyer för aktuell konversation och historik.
+- Sidofältet har en Journal-vy med flikarna Alla och Måltider. Eftersom måltider är den enda
+  implementerade journaltypen visar båda samma måltidsposter. Flikarna Symtom, Vikt och Sömn
+  visas avstängda tills respektive datatyp finns implementerad.
 - En ny chatt börjar med ett kompakt enkelradigt skrivfält. När texten radbryts får submit-knappen
   en egen nedersta rad utan text, medan textytan ovanför fortsätter växa upp till sin maxhöjd.
 - Ljust och mörkt tema kan väljas i Inställningar och sparas lokalt i webbläsaren.
@@ -145,7 +152,7 @@ funktionalitet hör hemma i `product.md`.
 
 - Hela måltider kan ännu inte raderas. Chatten har inget läsverktyg för historiska
   måltidsfrågor utanför den begränsade konversationskontexten.
-- Symtom, vikt, sparade rätter och annan strukturerad hälsodata kan ännu inte registreras,
+- Symtom, vikt, sömn, sparade rätter och annan strukturerad hälsodata kan ännu inte registreras,
   läsas, ändras eller raderas via chatten.
 - Evidensanalys och presentation av personliga mönster är inte implementerat.
 - Dataexport och permanent kontoradering är inte implementerat.
