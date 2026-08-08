@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import Wordmark from '$lib/components/brand/Wordmark.svelte';
 	import JournalActiveIcon from '$lib/components/icons/JournalActiveIcon.svelte';
 	import JournalIcon from '$lib/components/icons/JournalIcon.svelte';
 	import OverviewActiveIcon from '$lib/components/icons/OverviewActiveIcon.svelte';
@@ -60,7 +59,6 @@
 	inert={!open}
 >
 	<div class="sidebar-header">
-		<div class="sidebar-wordmark"><Wordmark /></div>
 		<button
 			class="sidebar-toggle open-toggle"
 			type="button"
@@ -177,37 +175,10 @@
 		flex: 0 0 2.5rem;
 	}
 
-	.sidebar-wordmark,
 	.open-toggle {
 		position: absolute;
 		top: 0;
 		left: 0.25rem;
-		transition: opacity 120ms ease;
-	}
-
-	.sidebar-wordmark {
-		display: flex;
-		left: 0;
-		height: 2.5rem;
-		align-items: center;
-		padding-left: 0.9rem;
-	}
-
-	.open-toggle {
-		opacity: 0;
-		pointer-events: none;
-	}
-
-	.sidebar:hover .sidebar-wordmark,
-	.sidebar-header:focus-within .sidebar-wordmark {
-		opacity: 0;
-		pointer-events: none;
-	}
-
-	.sidebar:hover .open-toggle,
-	.sidebar-header:focus-within .open-toggle {
-		opacity: 1;
-		pointer-events: auto;
 	}
 
 	nav {

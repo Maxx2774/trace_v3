@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import type { PathnameWithSearchOrHash } from '$app/types';
+	import AppPageLayout from '$lib/components/ui/AppPageLayout.svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import { formatSwedishLongDate } from '$lib/date-time';
 	import { groupMealsByDate } from '$lib/features/journal/meal-groups';
@@ -39,8 +40,8 @@
 	<meta name="description" content="Din samlade hälsojournal i Trace." />
 </svelte:head>
 
-<main class="journal-page">
-	<header>
+<AppPageLayout>
+	{#snippet header()}
 		<PageHeader title="Journal" subtitle={date} />
 		<nav class="tabs" aria-label="Journalfilter">
 			<a
@@ -57,7 +58,7 @@
 			<button type="button" disabled>Vikt</button>
 			<button type="button" disabled>Sömn</button>
 		</nav>
-	</header>
+	{/snippet}
 
 	<section
 		class="journal-content"
@@ -91,39 +92,16 @@
 			</div>
 		{/if}
 	</section>
-</main>
+</AppPageLayout>
 
 <style>
-	.journal-page {
-		display: flex;
-		position: relative;
-		width: min(100% - 2rem, 60rem);
-		min-height: 100vh;
-		flex-direction: column;
-		justify-content: flex-start;
-		box-sizing: border-box;
-		margin: 0 auto;
-		padding: 1rem 0 4rem;
-	}
-
-	header {
-		display: flex;
-		position: absolute;
-		top: 4.75rem;
-		left: calc((2.5rem - 1.2rem) / 2);
-		width: min(calc(100% - (2.5rem - 1.2rem) / 2), 44rem);
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 1.5rem;
-	}
-
 	.tabs {
 		display: flex;
 		width: calc(100% + 1rem);
 		align-items: center;
 		box-sizing: border-box;
 		gap: 0.25rem;
-		margin: -0.5rem;
+		margin: 1rem -0.5rem -0.5rem;
 		overflow-x: auto;
 		padding: 0.5rem;
 		scrollbar-width: none;
@@ -190,8 +168,6 @@
 	}
 
 	.journal-content {
-		width: min(calc(100% - (2.5rem - 1.2rem) / 2), 44rem);
-		margin-left: calc((2.5rem - 1.2rem) / 2);
 		padding-top: 14rem;
 	}
 
@@ -249,10 +225,6 @@
 	}
 
 	@media (max-width: 640px) {
-		.journal-page {
-			padding-top: 0;
-		}
-
 		.tabs a,
 		.tabs button {
 			padding-inline: 0.65rem;
